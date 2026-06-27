@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import { api, apiBlob, downloadBlobResponse } from '../api/client'
 import { useAuthStore } from '../stores/auth'
+import { buildTeachingContextQuery } from './contextQuery'
 import { buildCourseAssetTree } from './courseStructure'
 
 interface Course {
@@ -444,6 +446,11 @@ onMounted(loadCourses)
               <div v-if="chapter.knowledgePoints.length" class="knowledge-stack">
                 <div v-for="point in chapter.knowledgePoints" :key="point.id" class="knowledge-item">
                   <span class="knowledge-chip">{{ point.name }} · {{ difficultyLabel(point.difficulty) }}</span>
+                  <div class="quick-actions">
+                    <RouterLink :to="{ path: '/dashboard/materials', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, knowledge_point_id: point.id }) }">上传资料</RouterLink>
+                    <RouterLink :to="{ path: '/dashboard/lesson', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, knowledge_point_id: point.id }) }">生成教案</RouterLink>
+                    <RouterLink :to="{ path: '/dashboard/exercise', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, knowledge_point_id: point.id }) }">生成习题</RouterLink>
+                  </div>
                   <ul v-if="assetsForPoint(point.id).length" class="asset-list compact">
                     <li v-for="asset in assetsForPoint(point.id)" :key="assetKey(asset)">
                       <span>{{ assetTypeLabel(asset.asset_type) }} #{{ asset.id }} · {{ asset.title }}</span>
@@ -466,6 +473,12 @@ onMounted(loadCourses)
                   <div>
                     <strong>{{ session.order_index }}. {{ session.title }}</strong>
                     <small>{{ session.duration_minutes }} 分钟</small>
+                  </div>
+                  <div class="quick-actions">
+                    <RouterLink :to="{ path: '/dashboard/materials', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">上传资料</RouterLink>
+                    <RouterLink :to="{ path: '/dashboard/lesson', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">生成教案</RouterLink>
+                    <RouterLink :to="{ path: '/dashboard/exercise', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">生成习题</RouterLink>
+                    <RouterLink :to="{ path: '/dashboard/classrooms', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">发布作业</RouterLink>
                   </div>
                   <p v-if="session.teaching_goal">{{ session.teaching_goal }}</p>
                   <div v-if="session.knowledgePoints.length" class="knowledge-stack">
@@ -634,6 +647,24 @@ onMounted(loadCourses)
   background: #f0fdf4;
   font-size: 0.86rem;
   font-weight: 800;
+}
+
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.quick-actions a {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  color: var(--brand-dark);
+  background: #ffffff;
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-decoration: none;
 }
 
 .asset-block {

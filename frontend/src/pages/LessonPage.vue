@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 
 import { api, apiBlob, downloadBlobResponse } from '../api/client'
+import MaterialPicker from '../components/MaterialPicker.vue'
 import { useAuthStore } from '../stores/auth'
+import { buildTeachingContextQuery, parseTeachingContextQuery } from './contextQuery'
+import { lessonDefaultsFromContext } from './teachingContext'
 import { clearSelectionDependentState } from './workbenchSelection'
 
 interface Compliance {
@@ -53,12 +57,14 @@ interface Course {
 interface Chapter {
   id: number
   title: string
+  summary: string
   sessions: LessonSession[]
 }
 
 interface LessonSession {
   id: number
   title: string
+  duration_minutes: number
   teaching_goal: string
 }
 
@@ -67,6 +73,8 @@ interface KnowledgePoint {
   chapter_id: number | null
   session_id: number | null
   name: string
+  description: string
+  difficulty: string
 }
 
 interface CourseDetail extends Course {
@@ -89,7 +97,25 @@ interface LessonGenerateResponse {
   review: AIReview | null
 }
 
+interface MaterialRead {
+  id: number
+  title: string
+  resource_scope: string
+  parse_status: string
+  course_id: number | null
+  chapter_id: number | null
+  session_id: number | null
+  knowledge_point_id: number | null
+}
+
+interface PresentationResponse {
+  lesson_id: number
+  queued: boolean
+  message: string
+}
+
 const auth = useAuthStore()
+const route = useRoute()
 const form = reactive({
   course_id: 0,
   chapter_id: 0,
@@ -113,6 +139,8 @@ const content = ref('')
 const lessons = ref<LessonRead[]>([])
 const courses = ref<Course[]>([])
 const selectedCourse = ref<CourseDetail | null>(null)
+const materials = ref<MaterialRead[]>([])
+const selectedMaterialIds = ref<number[]>([])
 const versions = ref<LessonVersion[]>([])
 const compliance = ref<Compliance | null>(null)
 const review = ref<AIReview | null>(null)
@@ -122,6 +150,7 @@ const selectedLessonId = ref<number | null>(null)
 const loading = ref('')
 const error = ref('')
 const notice = ref('')
+const presentationMessage = ref('')
 
 const selectedLesson = computed(() => lessons.value.find((lesson) => lesson.id === selectedLessonId.value))
 const canCreateLessons = computed(() => auth.user?.permissions.includes('lesson:create') ?? false)
@@ -137,6 +166,12 @@ const availableKnowledgePoints = computed(() =>
   ) ?? [],
 )
 const revisedPreviewContent = computed(() => review.value?.revised_content ?? '')
+const contextIds = computed(() => ({
+  course_id: form.course_id || null,
+  chapter_id: form.chapter_id || null,
+  session_id: form.session_id || null,
+  knowledge_point_id: form.knowledge_point_id || null,
+}))
 const dependentState = {
   versions,
   compliance,
@@ -145,6 +180,7 @@ const dependentState = {
 }
 
 function materialIds(): number[] {
+  if (selectedMaterialIds.value.length) return selectedMaterialIds.value
   return form.material_ids
     .split(',')
     .map((value) => Number(value.trim()))
@@ -197,6 +233,7 @@ function fillFromLesson(lesson: LessonRead, clearDependentState = false) {
   form.duration_minutes = lesson.duration_minutes
   form.student_level = lesson.student_level
   form.material_ids = lesson.material_ids.join(',')
+  selectedMaterialIds.value = lesson.material_ids
   form.prompt_template = lesson.prompt_template
   form.output_format = lesson.output_format
   content.value = lesson.current_content
@@ -204,6 +241,10 @@ function fillFromLesson(lesson: LessonRead, clearDependentState = false) {
 
 async function loadCourses() {
   courses.value = await api<Course[]>('/api/courses')
+}
+
+async function loadMaterials() {
+  materials.value = await api<MaterialRead[]>('/api/materials')
 }
 
 async function loadCourseDetail(courseId: number) {
@@ -220,6 +261,22 @@ async function selectCourse() {
   form.session_id = 0
   form.knowledge_point_id = 0
   await loadCourseDetail(form.course_id)
+}
+
+async function applyRouteContext() {
+  const context = parseTeachingContextQuery(route.query)
+  if (!context.course_id) return
+  form.course_id = context.course_id
+  form.chapter_id = context.chapter_id
+  form.session_id = context.session_id
+  form.knowledge_point_id = context.knowledge_point_id
+  await loadCourseDetail(form.course_id)
+  if (selectedCourse.value) {
+    const defaults = lessonDefaultsFromContext(selectedCourse.value, context)
+    form.chapter = defaults.chapter || form.chapter
+    form.duration_minutes = defaults.duration_minutes || form.duration_minutes
+    form.teaching_goal = defaults.teaching_goal || form.teaching_goal
+  }
 }
 
 async function loadLessons() {
@@ -307,6 +364,31 @@ async function saveLesson() {
   }
 }
 
+async function generatePresentation() {
+  if (!selectedLessonId.value) {
+    setError(new Error('请先保存一份备课'), 'PPT 生成失败')
+    return
+  }
+  loading.value = 'presentation'
+  presentationMessage.value = ''
+  setMessage()
+  try {
+    const result = await api<PresentationResponse>(
+      `/api/presentations/lesson/${selectedLessonId.value}/generate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ template_name: 'default' }),
+      },
+    )
+    presentationMessage.value = result.message
+    setMessage(result.queued ? 'PPT 生成任务已提交。' : result.message)
+  } catch (err) {
+    setError(err, 'PPT 生成失败')
+  } finally {
+    loading.value = ''
+  }
+}
+
 async function loadVersions(lesson: LessonRead) {
   loading.value = 'versions'
   setMessage()
@@ -340,7 +422,8 @@ async function exportLesson(lessonId = selectedLessonId.value) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadLessons(), loadCourses()])
+  await Promise.all([loadLessons(), loadCourses(), loadMaterials()])
+  await applyRouteContext()
 })
 </script>
 
@@ -430,10 +513,20 @@ onMounted(async () => {
           <input v-model="form.use_materials" type="checkbox" />
           使用机构知识库材料
         </label>
-        <label class="wide">
-          材料 ID（多个用英文逗号分隔）
-          <input v-model.trim="form.material_ids" :disabled="!form.use_materials" placeholder="例如：1,2,3" />
-        </label>
+        <div class="wide">
+          <MaterialPicker
+            v-model="selectedMaterialIds"
+            :materials="materials"
+            :context-ids="contextIds"
+            :disabled="!form.use_materials"
+          />
+          <RouterLink
+            class="inline-action"
+            :to="{ path: '/dashboard/materials', query: { ...buildTeachingContextQuery(contextIds), return_to: '/dashboard/lesson' } }"
+          >
+            上传当前课程资料
+          </RouterLink>
+        </div>
         <label class="wide">
           教师补充提示词
           <textarea v-model.trim="form.prompt_template" rows="3" placeholder="例如：强调例题讲解、课堂互动和易错点" />
@@ -459,6 +552,15 @@ onMounted(async () => {
         <button class="btn-primary" type="button" :disabled="!content || loading === 'save'" @click="saveLesson">
           {{ loading === 'save' ? '保存中...' : '保存备课' }}
         </button>
+        <button
+          class="btn-secondary"
+          type="button"
+          :disabled="!selectedLessonId || loading === 'presentation'"
+          @click="generatePresentation"
+        >
+          {{ loading === 'presentation' ? '提交中...' : '生成 PPT' }}
+        </button>
+        <p v-if="presentationMessage" class="notice">{{ presentationMessage }}</p>
 
         <div v-if="compliance" class="result-card">
           <strong>合规风险：{{ riskLabel(compliance.risk_level) }}</strong>

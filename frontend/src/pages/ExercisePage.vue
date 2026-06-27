@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 
 import { api, apiBlob, downloadBlobResponse } from '../api/client'
+import MaterialPicker from '../components/MaterialPicker.vue'
 import { useAuthStore } from '../stores/auth'
+import { buildTeachingContextQuery, parseTeachingContextQuery } from './contextQuery'
+import { lessonDefaultsFromContext } from './teachingContext'
 import { clearSelectionDependentState } from './workbenchSelection'
 
 interface Compliance {
@@ -78,12 +82,15 @@ interface Course {
 interface Chapter {
   id: number
   title: string
+  summary: string
   sessions: LessonSession[]
 }
 
 interface LessonSession {
   id: number
   title: string
+  duration_minutes: number
+  teaching_goal: string
 }
 
 interface KnowledgePoint {
@@ -91,6 +98,8 @@ interface KnowledgePoint {
   chapter_id: number | null
   session_id: number | null
   name: string
+  description: string
+  difficulty: string
 }
 
 interface CourseDetail extends Course {
@@ -104,6 +113,17 @@ interface LessonOption {
   course_id: number | null
   chapter_id: number | null
   session_id: number | null
+}
+
+interface MaterialRead {
+  id: number
+  title: string
+  resource_scope: string
+  parse_status: string
+  course_id: number | null
+  chapter_id: number | null
+  session_id: number | null
+  knowledge_point_id: number | null
 }
 
 interface ExerciseVersion {
@@ -132,6 +152,7 @@ type PreviewBlock =
   | { type: 'svg'; content: string }
 
 const auth = useAuthStore()
+const route = useRoute()
 const form = reactive({
   course_id: 0,
   chapter_id: 0,
@@ -158,6 +179,8 @@ const exercises = ref<ExerciseRead[]>([])
 const courses = ref<Course[]>([])
 const selectedCourse = ref<CourseDetail | null>(null)
 const lessons = ref<LessonOption[]>([])
+const materials = ref<MaterialRead[]>([])
+const selectedMaterialIds = ref<number[]>([])
 const versions = ref<ExerciseVersion[]>([])
 const compliance = ref<Compliance | null>(null)
 const review = ref<AIReview | null>(null)
@@ -192,6 +215,12 @@ const availableLessons = computed(() =>
     (!form.session_id || lesson.session_id === form.session_id),
   ),
 )
+const contextIds = computed(() => ({
+  course_id: form.course_id || null,
+  chapter_id: form.chapter_id || null,
+  session_id: form.session_id || null,
+  knowledge_point_id: form.knowledge_point_id || null,
+}))
 const previewBlocks = computed(() => parsePreviewBlocks(content.value))
 const previewLimit = 14
 const visiblePreviewBlocks = computed(() => previewBlocks.value.slice(0, previewLimit))
@@ -207,6 +236,7 @@ const dependentState = {
 }
 
 function materialIds(): number[] {
+  if (selectedMaterialIds.value.length) return selectedMaterialIds.value
   return form.material_ids
     .split(',')
     .map((value) => Number(value.trim()))
@@ -289,6 +319,7 @@ function fillFromExercise(exercise: ExerciseRead, clearDependentState = false) {
   form.question_type = exercise.question_type
   form.difficulty = exercise.difficulty
   form.material_ids = exercise.material_ids.join(',')
+  selectedMaterialIds.value = exercise.material_ids
   form.prompt_template = exercise.prompt_template
   form.output_format = exercise.output_format
   content.value = normalizeGeneratedMathText(exercise.current_content)
@@ -300,6 +331,10 @@ async function loadCourses() {
 
 async function loadLessons() {
   lessons.value = await api<LessonOption[]>('/api/lessons')
+}
+
+async function loadMaterials() {
+  materials.value = await api<MaterialRead[]>('/api/materials')
 }
 
 async function loadCourseDetail(courseId: number) {
@@ -317,6 +352,34 @@ async function selectCourse() {
   form.knowledge_point_id = 0
   form.lesson_id = 0
   await loadCourseDetail(form.course_id)
+}
+
+async function applyRouteContext() {
+  const context = parseTeachingContextQuery(route.query)
+  if (!context.course_id && !context.lesson_id && !context.exercise_id) return
+
+  form.course_id = context.course_id
+  form.chapter_id = context.chapter_id
+  form.session_id = context.session_id
+  form.knowledge_point_id = context.knowledge_point_id
+  form.lesson_id = context.lesson_id
+
+  if (form.course_id) {
+    await loadCourseDetail(form.course_id)
+    if (selectedCourse.value) {
+      const defaults = lessonDefaultsFromContext(selectedCourse.value, context)
+      form.knowledge_point = defaults.knowledge_point || form.knowledge_point
+    }
+  }
+
+  if (!form.lesson_id && availableLessons.value.length) {
+    form.lesson_id = availableLessons.value[0].id
+  }
+
+  if (context.exercise_id) {
+    const matchedExercise = exercises.value.find((exercise) => exercise.id === context.exercise_id)
+    if (matchedExercise) fillFromExercise(matchedExercise, true)
+  }
 }
 
 async function loadCapabilities() {
@@ -570,11 +633,9 @@ function normalizeInlineLatex(value: string): string {
     .replace(/[ \t]+/g, ' ')
 }
 
-onMounted(() => {
-  void loadCapabilities()
-  void loadExercises()
-  void loadCourses()
-  void loadLessons()
+onMounted(async () => {
+  await Promise.all([loadCapabilities(), loadExercises(), loadCourses(), loadLessons(), loadMaterials()])
+  await applyRouteContext()
 })
 </script>
 
@@ -691,10 +752,20 @@ onMounted(() => {
           <input v-model="form.use_materials" type="checkbox" />
           使用机构知识库材料
         </label>
-        <label class="wide">
-          材料 ID（多个用英文逗号分隔）
-          <input v-model.trim="form.material_ids" :disabled="!form.use_materials" placeholder="例如：1,2,3" />
-        </label>
+        <div class="wide">
+          <MaterialPicker
+            v-model="selectedMaterialIds"
+            :materials="materials"
+            :context-ids="contextIds"
+            :disabled="!form.use_materials"
+          />
+          <RouterLink
+            class="inline-action"
+            :to="{ path: '/dashboard/materials', query: { ...buildTeachingContextQuery(contextIds), return_to: '/dashboard/exercise' } }"
+          >
+            上传当前课程资料
+          </RouterLink>
+        </div>
         <label class="checkbox">
           <input v-model="form.multi_agent_review" type="checkbox" />
           多 AI 核验

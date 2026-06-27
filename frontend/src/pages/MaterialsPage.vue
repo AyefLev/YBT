@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 
 import { api, apiForm } from '../api/client'
 import { useAuthStore } from '../stores/auth'
+import { parseTeachingContextQuery } from './contextQuery'
 
 interface MaterialRead {
   id: number
@@ -94,6 +96,7 @@ interface CourseDetail extends Course {
 }
 
 const auth = useAuthStore()
+const route = useRoute()
 const title = ref('')
 const subject = ref('')
 const purpose = ref('')
@@ -117,6 +120,7 @@ const retrievalMode = ref('')
 const loading = ref('')
 const error = ref('')
 const notice = ref('')
+const returnTo = ref('')
 const canPublishPublic = computed(() => auth.user?.permissions.includes('material:publish_public') ?? false)
 const canManageAllMaterials = computed(() => auth.user?.permissions.includes('material:manage_all') ?? false)
 const availableSessions = computed(() => {
@@ -201,6 +205,26 @@ async function selectCourse() {
   error.value = ''
   try {
     selectedCourse.value = await api<CourseDetail>(`/api/courses/${courseId.value}`)
+  } catch (err) {
+    setError(err, '课程详情加载失败')
+  } finally {
+    loading.value = ''
+  }
+}
+
+async function applyRouteContext() {
+  const context = parseTeachingContextQuery(route.query)
+  returnTo.value = typeof route.query.return_to === 'string' ? route.query.return_to : ''
+  if (!context.course_id) return
+
+  courseId.value = context.course_id
+  loading.value = `course-${courseId.value}`
+  error.value = ''
+  try {
+    selectedCourse.value = await api<CourseDetail>(`/api/courses/${courseId.value}`)
+    chapterId.value = context.chapter_id
+    sessionId.value = context.session_id
+    knowledgePointId.value = context.knowledge_point_id
   } catch (err) {
     setError(err, '课程详情加载失败')
   } finally {
@@ -348,9 +372,9 @@ function retrievalModeLabel(mode: string): string {
   return labels[mode] ?? '实时检索'
 }
 
-onMounted(() => {
-  void loadMaterials()
-  void loadCourses()
+onMounted(async () => {
+  await Promise.all([loadMaterials(), loadCourses()])
+  await applyRouteContext()
 })
 </script>
 
@@ -366,6 +390,9 @@ onMounted(() => {
 
     <p v-if="error" class="alert" role="alert">{{ error }}</p>
     <p v-if="notice" class="notice">{{ notice }}</p>
+    <RouterLink v-if="returnTo" class="inline-action" :to="returnTo">
+      返回生成页面
+    </RouterLink>
 
     <div class="two-column-grid">
       <form class="panel stack" @submit.prevent="uploadMaterial">

@@ -199,3 +199,80 @@ def test_teacher_cannot_manage_other_teacher_classroom(client):
 
     assert students_response.status_code == 404
     assert assignment_response.status_code == 404
+
+
+def test_teacher_can_publish_assignment_from_own_course_exercise(client):
+    teacher_headers = _auth_headers(client, username="teacher_publish_exercise")
+    course = client.post(
+        "/api/courses",
+        headers=teacher_headers,
+        json={"title": "高数强化", "subject": "数学", "exam_type": "考研"},
+    ).json()
+    classroom = client.post(
+        "/api/classrooms",
+        headers=teacher_headers,
+        json={"name": "高数班", "course_id": course["id"]},
+    ).json()
+    exercise = client.post(
+        "/api/exercises",
+        headers=teacher_headers,
+        json={
+            "course_id": course["id"],
+            "title": "导数练习",
+            "subject": "高数",
+            "knowledge_point": "导数",
+            "question_type": "选择题",
+            "difficulty": "medium",
+            "content": "题干：求导\n答案：A",
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/classrooms/{classroom['id']}/assignments",
+        headers=teacher_headers,
+        json={"title": "导数作业", "exercise_id": exercise["id"]},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["exercise_id"] == exercise["id"]
+
+
+def test_teacher_cannot_publish_assignment_from_other_course_exercise(client):
+    teacher_headers = _auth_headers(client, username="teacher_publish_mismatch")
+    first_course = client.post(
+        "/api/courses",
+        headers=teacher_headers,
+        json={"title": "高数", "subject": "数学", "exam_type": "考研"},
+    ).json()
+    second_course = client.post(
+        "/api/courses",
+        headers=teacher_headers,
+        json={"title": "英语", "subject": "英语", "exam_type": "考研"},
+    ).json()
+    classroom = client.post(
+        "/api/classrooms",
+        headers=teacher_headers,
+        json={"name": "高数班", "course_id": first_course["id"]},
+    ).json()
+    exercise = client.post(
+        "/api/exercises",
+        headers=teacher_headers,
+        json={
+            "course_id": second_course["id"],
+            "title": "阅读练习",
+            "subject": "英语",
+            "knowledge_point": "阅读",
+            "question_type": "选择题",
+            "difficulty": "medium",
+            "content": "题干：阅读\n答案：A",
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/classrooms/{classroom['id']}/assignments",
+        headers=teacher_headers,
+        json={"title": "错误作业", "exercise_id": exercise["id"]},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Exercise does not belong to classroom course"

@@ -247,24 +247,24 @@ def _provider_config_for_role(
         return ProviderConfig(
             base_url=settings.review_llm_base_url or settings.llm_base_url,
             api_key=settings.review_llm_api_key or settings.llm_api_key,
-            model=model or settings.llm_review_model or settings.llm_model,
+            model=settings.llm_review_model or settings.llm_model,
         )
     if role == "revise":
         return ProviderConfig(
             base_url=settings.revise_llm_base_url or settings.llm_base_url,
             api_key=settings.revise_llm_api_key or settings.llm_api_key,
-            model=model or settings.llm_revise_model or settings.llm_model,
+            model=settings.llm_revise_model or settings.llm_model,
         )
     if role == "vision":
         return ProviderConfig(
             base_url=settings.vision_llm_base_url or settings.llm_base_url,
-            api_key=settings.vision_llm_api_key or settings.llm_api_key,
-            model=settings.vision_llm_model or settings.llm_model,
+            api_key=settings.vision_llm_api_key,
+            model=settings.vision_llm_model,
         )
     return ProviderConfig(
         base_url=settings.generate_llm_base_url or settings.llm_base_url,
         api_key=settings.generate_llm_api_key or settings.llm_api_key,
-        model=model or settings.llm_generate_model or settings.llm_model,
+        model=settings.llm_generate_model or settings.llm_model,
     )
 
 
@@ -284,7 +284,7 @@ def _settings_api_key(settings: Any, role: str) -> str:
     if role == "revise":
         return settings.revise_llm_api_key or settings.llm_api_key
     if role == "vision":
-        return settings.vision_llm_api_key or settings.llm_api_key
+        return settings.vision_llm_api_key
     return settings.generate_llm_api_key or settings.llm_api_key
 
 
@@ -294,7 +294,7 @@ def _settings_model(settings: Any, role: str) -> str:
     if role == "revise":
         return settings.llm_revise_model or settings.llm_model
     if role == "vision":
-        return settings.vision_llm_model or settings.llm_model
+        return settings.vision_llm_model
     return settings.llm_generate_model or settings.llm_model
 
 

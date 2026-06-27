@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
 const router = useRouter()
+const SIDEBAR_COLLAPSED_KEY = 'workbench-sidebar-collapsed'
+const sidebarCollapsed = ref(
+  typeof localStorage !== 'undefined' && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true',
+)
 
 const userName = computed(() => auth.user?.display_name || auth.user?.username || '教师')
 
@@ -51,10 +55,17 @@ async function logout() {
   auth.logout()
   await router.push('/login')
 }
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value))
+  }
+}
 </script>
 
 <template>
-  <div class="workbench">
+  <div class="workbench" :class="{ collapsed: sidebarCollapsed }">
     <aside class="sidebar">
       <div class="brand">
         <span class="logo">研</span>
@@ -62,6 +73,9 @@ async function logout() {
           <strong>研备通 AI</strong>
           <span>成人考研机构智能教研平台</span>
         </div>
+        <button type="button" class="collapse-toggle" @click="toggleSidebar">
+          {{ sidebarCollapsed ? '展开' : '收起' }}
+        </button>
       </div>
 
       <nav aria-label="工作台导航">
@@ -72,7 +86,8 @@ async function logout() {
           :to="item.to"
           :class="{ exact: item.to === '/dashboard' }"
         >
-          {{ item.label }}
+          <span class="nav-full">{{ item.label }}</span>
+          <span class="nav-short">{{ item.label.slice(0, 2) }}</span>
         </RouterLink>
       </nav>
 
@@ -100,6 +115,10 @@ async function logout() {
     var(--bg);
 }
 
+.workbench.collapsed {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+
 .sidebar {
   position: sticky;
   top: 0;
@@ -117,6 +136,16 @@ async function logout() {
   gap: 12px;
   align-items: center;
   margin-bottom: 26px;
+}
+
+.collapse-toggle {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: var(--muted);
+  background: #ffffff;
+  font-weight: 900;
 }
 
 .logo {
@@ -166,6 +195,10 @@ nav a {
   text-decoration: none;
 }
 
+.nav-short {
+  display: none;
+}
+
 nav a:hover {
   background: #f1f5f9;
 }
@@ -202,8 +235,40 @@ nav a.exact.router-link-exact-active {
   padding: 30px 32px;
 }
 
+.workbench.collapsed .sidebar {
+  padding: 18px 12px;
+}
+
+.workbench.collapsed .brand {
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+
+.workbench.collapsed .brand div,
+.workbench.collapsed .account span,
+.workbench.collapsed .account strong,
+.workbench.collapsed .account small,
+.workbench.collapsed .nav-full,
+.workbench.collapsed .nav-group {
+  display: none;
+}
+
+.workbench.collapsed .nav-short {
+  display: inline;
+}
+
+.workbench.collapsed nav a,
+.workbench.collapsed .account button,
+.workbench.collapsed .collapse-toggle {
+  text-align: center;
+}
+
 @media (max-width: 860px) {
   .workbench {
+    display: block;
+  }
+
+  .workbench.collapsed {
     display: block;
   }
 
@@ -233,6 +298,29 @@ nav a.exact.router-link-exact-active {
   }
 
   .account span {
+    display: none;
+  }
+
+  .brand {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+  }
+
+  .collapse-toggle {
+    grid-column: auto;
+  }
+
+  .workbench.collapsed .brand {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    justify-items: stretch;
+  }
+
+  .workbench.collapsed .brand div,
+  .workbench.collapsed .nav-full,
+  .workbench.collapsed .nav-group {
+    display: initial;
+  }
+
+  .workbench.collapsed .nav-short {
     display: none;
   }
 

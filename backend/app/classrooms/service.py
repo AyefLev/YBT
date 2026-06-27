@@ -21,6 +21,7 @@ from app.classrooms.schemas import (
     SubmissionGradeRequest,
 )
 from app.courses.models import Course
+from app.exercises.models import Exercise
 
 
 def create_classroom(
@@ -157,6 +158,9 @@ def create_assignment(
     classroom: Classroom,
     payload: AssignmentCreateRequest,
 ) -> Assignment:
+    if payload.exercise_id is not None:
+        _ensure_assignment_exercise_scope(db, classroom=classroom, exercise_id=payload.exercise_id)
+
     assignment = Assignment(
         classroom_id=classroom.id,
         title=payload.title,
@@ -170,6 +174,22 @@ def create_assignment(
     db.add(assignment)
     db.flush()
     return assignment
+
+
+def _ensure_assignment_exercise_scope(
+    db: Session,
+    *,
+    classroom: Classroom,
+    exercise_id: int,
+) -> None:
+    exercise = db.get(Exercise, exercise_id)
+    if exercise is None or exercise.owner_id != classroom.teacher_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
+    if classroom.course_id is not None and exercise.course_id not in {None, classroom.course_id}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Exercise does not belong to classroom course",
+        )
 
 
 def list_assignments(

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
+import { parseTeachingContextQuery } from './contextQuery'
 
 interface Classroom {
   id: number
@@ -33,10 +35,28 @@ interface Assignment {
   title: string
   description: string
   instructions: string
+  exercise_id: number | null
   status: string
   submission_status: string | null
   score: number | null
   feedback: string
+}
+
+interface Course {
+  id: number
+  title: string
+  subject: string
+}
+
+interface ExerciseOption {
+  id: number
+  title: string
+  subject: string
+  knowledge_point: string
+  course_id: number | null
+  chapter_id: number | null
+  session_id: number | null
+  current_content: string
 }
 
 interface Submission {
@@ -51,6 +71,7 @@ interface Submission {
 }
 
 const auth = useAuthStore()
+const route = useRoute()
 const canCreateClasses = computed(() => auth.user?.permissions.includes('class:manage') ?? false)
 const canViewClassManagementData = computed(() =>
   Boolean(
@@ -63,6 +84,8 @@ const canJoinClasses = computed(() => auth.user?.permissions.includes('class:joi
 const canGrade = computed(() => auth.user?.permissions.includes('assignment:grade') ?? false)
 
 const classes = ref<Classroom[]>([])
+const courses = ref<Course[]>([])
+const exercises = ref<ExerciseOption[]>([])
 const selectedClassId = ref<number | null>(null)
 const students = ref<ClassroomStudent[]>([])
 const assignments = ref<Assignment[]>([])
@@ -74,10 +97,12 @@ const notice = ref('')
 
 const className = ref('')
 const classDescription = ref('')
+const classCourseId = ref(0)
 const inviteCode = ref('')
 const assignmentTitle = ref('')
 const assignmentDescription = ref('')
 const assignmentInstructions = ref('')
+const selectedExerciseId = ref(0)
 const submissionContent = ref<Record<number, string>>({})
 const gradeScores = ref<Record<number, number>>({})
 const gradeFeedback = ref<Record<number, string>>({})
@@ -98,6 +123,11 @@ const canReadSubmissions = computed(() =>
 const canGradeSelectedClass = computed(() => canGrade.value && canManageSelectedClass.value)
 const visibleAssignments = computed(() =>
   canViewClassManagementData.value ? assignments.value : myAssignments.value,
+)
+const publishableExercises = computed(() =>
+  exercises.value.filter(
+    (exercise) => !selectedClass.value?.course_id || exercise.course_id === selectedClass.value.course_id,
+  ),
 )
 
 function setError(err: unknown, fallback: string) {
@@ -128,6 +158,22 @@ async function loadClasses() {
   }
 }
 
+async function loadCourses() {
+  try {
+    courses.value = await api<Course[]>('/api/courses')
+  } catch {
+    courses.value = []
+  }
+}
+
+async function loadExercises() {
+  try {
+    exercises.value = await api<ExerciseOption[]>('/api/exercises')
+  } catch {
+    exercises.value = []
+  }
+}
+
 async function loadMyAssignments() {
   if (!canJoinClasses.value) return
   try {
@@ -147,10 +193,12 @@ async function createClassroom() {
       body: JSON.stringify({
         name: className.value,
         description: classDescription.value,
+        course_id: classCourseId.value || null,
       }),
     })
     className.value = ''
     classDescription.value = ''
+    classCourseId.value = 0
     notice.value = `班级已创建，邀请码：${classroom.invite_code}`
     await loadClasses()
   } catch (err) {
@@ -205,17 +253,41 @@ async function createAssignment() {
         title: assignmentTitle.value,
         description: assignmentDescription.value,
         instructions: assignmentInstructions.value,
+        exercise_id: selectedExerciseId.value || null,
       }),
     })
     assignmentTitle.value = ''
     assignmentDescription.value = ''
     assignmentInstructions.value = ''
+    selectedExerciseId.value = 0
     notice.value = '作业已发布。'
     await loadClassDetail(selectedClass.value)
   } catch (err) {
     setError(err, '发布作业失败')
   } finally {
     loading.value = ''
+  }
+}
+
+function selectExerciseForAssignment() {
+  const exercise = exercises.value.find((item) => item.id === selectedExerciseId.value)
+  if (!exercise) return
+  assignmentTitle.value = assignmentTitle.value || exercise.title
+  assignmentDescription.value = assignmentDescription.value || `${exercise.subject} · ${exercise.knowledge_point}`
+  assignmentInstructions.value =
+    assignmentInstructions.value || exercise.current_content.slice(0, 240)
+}
+
+async function applyRouteContext() {
+  const context = parseTeachingContextQuery(route.query)
+  if (!context.course_id && !context.exercise_id) return
+  if (context.exercise_id) {
+    selectedExerciseId.value = context.exercise_id
+    selectExerciseForAssignment()
+  }
+  if (context.course_id) {
+    const matchedClass = classes.value.find((item) => item.course_id === context.course_id)
+    if (matchedClass) await loadClassDetail(matchedClass)
   }
 }
 
@@ -275,7 +347,8 @@ async function gradeSubmission(submission: Submission) {
 }
 
 onMounted(async () => {
-  await loadClasses()
+  await Promise.all([loadCourses(), loadExercises(), loadClasses()])
+  await applyRouteContext()
   await loadMyAssignments()
 })
 </script>
@@ -306,6 +379,15 @@ onMounted(async () => {
         <label>
           班级说明
           <textarea v-model.trim="classDescription" rows="3" />
+        </label>
+        <label>
+          关联课程
+          <select v-model.number="classCourseId">
+            <option :value="0">不绑定课程</option>
+            <option v-for="course in courses" :key="course.id" :value="course.id">
+              {{ course.title }} · {{ course.subject }}
+            </option>
+          </select>
         </label>
         <button class="btn-primary" type="submit" :disabled="loading === 'create-class'">
           {{ loading === 'create-class' ? '创建中...' : '创建班级' }}
@@ -368,6 +450,15 @@ onMounted(async () => {
 
         <form v-if="canCreateAssignments" class="stack" @submit.prevent="createAssignment">
           <h3>发布作业</h3>
+          <label>
+            关联习题
+            <select v-model.number="selectedExerciseId" @change="selectExerciseForAssignment">
+              <option :value="0">不关联习题</option>
+              <option v-for="exercise in publishableExercises" :key="exercise.id" :value="exercise.id">
+                {{ exercise.title }} · {{ exercise.knowledge_point }}
+              </option>
+            </select>
+          </label>
           <label>
             标题
             <input v-model.trim="assignmentTitle" required />
