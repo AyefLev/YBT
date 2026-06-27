@@ -32,7 +32,7 @@ def generate_lesson(
         chunks = search_chunks(
             db,
             query=f"{payload.chapter} {payload.teaching_goal}",
-            top_k=5,
+            top_k=payload.reference_count,
             material_ids=payload.material_ids,
             current_user=current_user,
         )
@@ -40,11 +40,12 @@ def generate_lesson(
 
     form = payload.model_dump()
     form["teaching_context"] = teaching_context
+    form["retrieval_note"] = _retrieval_note(payload.retrieval_focus, payload.reference_count)
     if payload.web_search_enabled:
         form["web_search_note"] = "已预留网络检索接入点；当前离线演示版本不会主动访问公网。"
     prompt = build_lesson_prompt(form, [reference.content for reference in references])
-    ai_result = generate_text(db, "lesson", prompt)
-    review = review_generated_content(db, task_type="lesson", content=ai_result.content)
+    ai_result = generate_text(db, "lesson", prompt, user_id=current_user.id)
+    review = review_generated_content(db, task_type="lesson", content=ai_result.content, user_id=current_user.id)
     compliance = check_content(db, "lesson", ai_result.content)
 
     return LessonGenerateResponse(
@@ -253,6 +254,15 @@ def _build_teaching_context(
             if point.description:
                 lines.append(f"知识点说明：{point.description}")
     return "\n".join(lines)
+
+
+def _retrieval_note(focus: str, reference_count: int) -> str:
+    labels = {
+        "precise": "优先使用最贴近当前课程节点的少量资料，避免扩展过远。",
+        "balanced": "在相关性和覆盖面之间保持均衡。",
+        "broad": "允许参考更多相邻资料，用于补充背景和拓展案例。",
+    }
+    return f"{labels.get(focus, labels['balanced'])} 本次最多引用 {reference_count} 个资料片段。"
 
 
 def _validate_teaching_scope(

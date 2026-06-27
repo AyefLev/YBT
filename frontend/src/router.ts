@@ -24,7 +24,8 @@ import ResourcesPage from './pages/ResourcesPage.vue'
 import ReviewQueuePage from './pages/ReviewQueuePage.vue'
 import SystemHealthPage from './pages/SystemHealthPage.vue'
 
-import { TOKEN_KEY } from './api/client'
+import { getAuthToken } from './api/client'
+import { useAuthStore } from './stores/auth'
 
 export const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/login' },
@@ -36,18 +37,27 @@ export const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     children: [
       { path: '', component: DashboardPage },
-      { path: 'lesson', component: LessonPage },
-      { path: 'exercise', component: ExercisePage },
-      { path: 'materials', component: MaterialsPage },
-      { path: 'courses', component: CoursesPage },
-      { path: 'classrooms', component: ClassroomsPage },
-      { path: 'questions', component: QuestionBankPage },
-      { path: 'reviews', component: ReviewQueuePage },
-      { path: 'compliance', component: CompliancePage },
-      { path: 'observability', component: ObservabilityPage },
-      { path: 'health', component: SystemHealthPage },
+      { path: 'lesson', component: LessonPage, meta: { permissions: ['lesson:create', 'lesson:view_all'], pageMode: 'generate' } },
+      { path: 'lesson/generate', component: LessonPage, meta: { permissions: ['lesson:create'], pageMode: 'generate' } },
+      { path: 'lesson/records', component: LessonPage, meta: { permissions: ['lesson:create', 'lesson:view_all'], pageMode: 'records' } },
+      { path: 'exercise', component: ExercisePage, meta: { permissions: ['exercise:create', 'exercise:view_all'], pageMode: 'generate' } },
+      { path: 'exercise/generate', component: ExercisePage, meta: { permissions: ['exercise:create'], pageMode: 'generate' } },
+      { path: 'exercise/records', component: ExercisePage, meta: { permissions: ['exercise:create', 'exercise:view_all'], pageMode: 'records' } },
+      { path: 'materials', component: MaterialsPage, meta: { permissions: ['material:upload', 'material:view_all', 'material:view_public'], pageMode: 'library' } },
+      { path: 'materials/upload', component: MaterialsPage, meta: { permissions: ['material:upload'], pageMode: 'upload' } },
+      { path: 'materials/library', component: MaterialsPage, meta: { permissions: ['material:upload', 'material:view_all', 'material:view_public'], pageMode: 'library' } },
+      { path: 'courses', component: CoursesPage, meta: { permissions: ['course:create', 'course:view_all'] } },
+      { path: 'classrooms', component: ClassroomsPage, meta: { permissions: ['class:manage', 'class:join', 'class:view_all'] } },
+      { path: 'questions', component: QuestionBankPage, meta: { permissions: ['exercise:create', 'question:view_all'] } },
+      { path: 'reviews', component: ReviewQueuePage, meta: { permissions: ['review:manage'] } },
+      { path: 'compliance', component: CompliancePage, meta: { permissions: ['lesson:create'] } },
+      { path: 'observability', component: ObservabilityPage, meta: { permissions: ['log:view'], pageMode: 'overview' } },
+      { path: 'observability/token', component: ObservabilityPage, meta: { permissions: ['log:view'], pageMode: 'token' } },
+      { path: 'health', component: SystemHealthPage, meta: { permissions: ['log:view'] } },
       { path: 'resources', component: ResourcesPage },
-      { path: 'admin', component: AdminPage },
+      { path: 'admin', component: AdminPage, meta: { permissions: ['admin:user_manage'], pageMode: 'users' } },
+      { path: 'admin/users', component: AdminPage, meta: { permissions: ['admin:user_manage'], pageMode: 'users' } },
+      { path: 'admin/api', component: AdminPage, meta: { permissions: ['admin:content_manage'], pageMode: 'api' } },
     ],
   },
 ]
@@ -62,13 +72,40 @@ export function createAppRouter(history: RouterHistory = createDefaultHistory())
     routes,
   })
 
-  router.beforeEach((to) => {
-    if (to.matched.some((route) => route.meta.requiresAuth) && !localStorage.getItem(TOKEN_KEY)) {
+  router.beforeEach(async (to) => {
+    const requiresAuth = to.matched.some((route) => route.meta.requiresAuth)
+    if (requiresAuth && !getAuthToken()) {
       return {
         path: '/login',
         query: { redirect: to.fullPath },
       }
     }
+
+    if (!requiresAuth) return undefined
+
+    const auth = useAuthStore()
+    if (!auth.user) {
+      try {
+        await auth.loadMe()
+      } catch {
+        return {
+          path: '/login',
+          query: { redirect: to.fullPath },
+        }
+      }
+    }
+
+    const requiredPermissions = to.matched.flatMap((route) => {
+      const permissions = route.meta.permissions
+      return Array.isArray(permissions) ? permissions.map(String) : []
+    })
+    if (
+      requiredPermissions.length &&
+      !requiredPermissions.some((permission) => auth.user?.permissions.includes(permission))
+    ) {
+      return { path: '/dashboard' }
+    }
+    return undefined
   })
 
   return router

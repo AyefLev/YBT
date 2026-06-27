@@ -21,6 +21,28 @@ export class ApiError extends Error {
 
 const TOKEN_KEY = 'token'
 
+function browserSessionStorage(): Storage | null {
+  return typeof sessionStorage === 'undefined' ? null : sessionStorage
+}
+
+function browserLocalStorage(): Storage | null {
+  return typeof localStorage === 'undefined' ? null : localStorage
+}
+
+export function getAuthToken(): string | null {
+  return browserSessionStorage()?.getItem(TOKEN_KEY) ?? null
+}
+
+export function setAuthToken(token: string): void {
+  browserSessionStorage()?.setItem(TOKEN_KEY, token)
+  browserLocalStorage()?.removeItem(TOKEN_KEY)
+}
+
+export function clearAuthToken(): void {
+  browserSessionStorage()?.removeItem(TOKEN_KEY)
+  browserLocalStorage()?.removeItem(TOKEN_KEY)
+}
+
 async function parseResponse(response: Response): Promise<unknown> {
   if (response.status === 204) {
     return undefined
@@ -56,7 +78,7 @@ function requestHeaders(options: ApiOptions): Headers {
     headers.set('Content-Type', 'application/json')
   }
 
-  const token = localStorage.getItem(TOKEN_KEY)
+  const token = getAuthToken()
   if (token && !options.skipAuth) {
     headers.set('Authorization', `Bearer ${token}`)
   }

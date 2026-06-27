@@ -35,6 +35,7 @@ def get_model_capabilities(db: Session = Depends(get_db)) -> ModelCapabilityResp
     review_config = _provider_config_for_role(settings, "review", db=db)
     revise_config = _provider_config_for_role(settings, "revise", db=db)
     vision_config = _provider_config_for_role(settings, "vision", db=db)
+    embedding_config = _provider_config_for_role(settings, "embedding", db=db)
     capabilities = ModelCapabilityResponse(
         text_model=generate_config.model,
         text_configured=bool(generate_config.api_key),
@@ -46,8 +47,8 @@ def get_model_capabilities(db: Session = Depends(get_db)) -> ModelCapabilityResp
         revise_configured=bool(revise_config.api_key),
         vision_model=vision_config.model,
         vision_configured=bool(vision_config.api_key and vision_config.model),
-        embedding_model=settings.embedding_model,
-        embedding_configured=bool(settings.embedding_model),
+        embedding_model=embedding_config.model,
+        embedding_configured=bool(embedding_config.model),
         mock_on_failure=settings.llm_mock_on_failure,
         multi_agent_review=settings.llm_multi_agent_review,
     )
@@ -67,6 +68,7 @@ def get_model_connectivity(
             check_model_connectivity("review", db=db, probe=probe),
             check_model_connectivity("revise", db=db, probe=probe),
             check_model_connectivity("vision", db=db, probe=probe),
+            check_model_connectivity("embedding", db=db, probe=probe),
         ],
     )
 

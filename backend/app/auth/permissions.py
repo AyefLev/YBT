@@ -5,6 +5,7 @@ PERMISSION_CODES = [
     "exercise:create",
     "exercise:view_all",
     "material:upload",
+    "material:view_public",
     "material:publish_public",
     "material:view_all",
     "material:manage_all",
@@ -79,6 +80,7 @@ ROLE_PERMISSIONS = {
     "student": [
         "class:join",
         "assignment:submit",
+        "material:view_public",
     ],
     "pending_teacher": [],
     "operator": ["material:upload"],

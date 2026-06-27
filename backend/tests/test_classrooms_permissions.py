@@ -50,7 +50,11 @@ def test_student_registration_gets_student_permissions(client):
     assert body["roles"] == ["student"]
     assert body["requested_role"] == "student"
     assert body["account_status"] == "approved"
-    assert set(body["permissions"]) == {"class:join", "assignment:submit"}
+    assert set(body["permissions"]) == {
+        "class:join",
+        "assignment:submit",
+        "material:view_public",
+    }
 
 
 def test_teacher_application_can_be_approved_by_admin(client):

@@ -44,3 +44,15 @@ def require_permission(code: str) -> Callable[[User], User]:
         return current_user
 
     return dependency
+
+
+def require_any_permission(*codes: str) -> Callable[[User], User]:
+    def dependency(current_user: User = Depends(get_current_user)) -> User:
+        if not any(code in current_user.permission_codes for code in codes):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not enough permissions",
+            )
+        return current_user
+
+    return dependency

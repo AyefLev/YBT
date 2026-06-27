@@ -9,6 +9,7 @@ LESSON_LABELS = {
     "output_format": "输出格式要求",
     "prompt_template": "教师补充提示词",
     "web_search_note": "网络检索",
+    "retrieval_note": "资料引用策略",
 }
 
 EXERCISE_LABELS = {
@@ -22,6 +23,7 @@ EXERCISE_LABELS = {
     "lesson_context": "关联教案",
     "output_format": "输出格式要求",
     "prompt_template": "教师补充提示词",
+    "retrieval_note": "资料引用策略",
 }
 
 

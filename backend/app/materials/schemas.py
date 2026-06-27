@@ -13,6 +13,9 @@ class MaterialRead(BaseModel):
     chapter_id: int | None = None
     session_id: int | None = None
     knowledge_point_id: int | None = None
+    chunk_strategy: str = "fixed"
+    chunk_size: int = 800
+    chunk_overlap: int = 80
     tags: list[str]
     file_name: str
     file_type: str

@@ -51,6 +51,17 @@ function toggle(materialId: number, enabled: boolean) {
 function scopeLabel(scope: string): string {
   return scope === 'public' ? '公共资源' : '个人资源'
 }
+
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    pending: '等待解析',
+    parsing: '解析中',
+    parsed: '已解析',
+    empty: '无内容',
+    failed: '解析失败',
+  }
+  return labels[status] ?? status
+}
 </script>
 
 <template>
@@ -79,7 +90,7 @@ function scopeLabel(scope: string): string {
         <span>
           <strong>#{{ material.id }} {{ material.title }}</strong>
           <small>
-            {{ scopeLabel(material.resource_scope) }} · {{ material.parse_status }}
+            {{ scopeLabel(material.resource_scope) }} · {{ statusLabel(material.parse_status) }}
             <template v-if="material.course_id"> · 课程 {{ material.course_id }}</template>
             <template v-if="material.chapter_id"> · 章节 {{ material.chapter_id }}</template>
             <template v-if="material.session_id"> · 课次 {{ material.session_id }}</template>

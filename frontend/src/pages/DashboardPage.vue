@@ -36,6 +36,26 @@ const riskyCount = computed(
 )
 const canCreateLessons = computed(() => auth.user?.permissions.includes('lesson:create') ?? false)
 const canCreateExercises = computed(() => auth.user?.permissions.includes('exercise:create') ?? false)
+const canViewLessons = computed(() =>
+  Boolean(auth.user?.permissions.some((permission) => ['lesson:create', 'lesson:view_all'].includes(permission))),
+)
+const canViewExercises = computed(() =>
+  Boolean(auth.user?.permissions.some((permission) => ['exercise:create', 'exercise:view_all'].includes(permission))),
+)
+const quickLinks = computed(() =>
+  [
+    { label: '我的班级', to: '/dashboard/classrooms', show: hasAnyPermission('class:join', 'class:manage', 'class:view_all') },
+    { label: '资料库', to: '/dashboard/materials', show: hasAnyPermission('material:view_public', 'material:upload', 'material:view_all') },
+    { label: '课程体系', to: '/dashboard/courses', show: hasAnyPermission('course:create', 'course:view_all') },
+    { label: '题库管理', to: '/dashboard/questions', show: hasAnyPermission('exercise:create', 'question:view_all') },
+    { label: '教研审核', to: '/dashboard/reviews', show: hasAnyPermission('review:manage') },
+    { label: '内容检查', to: '/dashboard/compliance', show: hasAnyPermission('lesson:create') },
+  ].filter((item) => item.show),
+)
+
+function hasAnyPermission(...permissions: string[]): boolean {
+  return permissions.some((permission) => auth.user?.permissions.includes(permission))
+}
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -60,8 +80,8 @@ async function loadDashboard() {
   error.value = ''
   try {
     const [lessonList, exerciseList] = await Promise.all([
-      api<LessonRead[]>('/api/lessons'),
-      api<ExerciseRead[]>('/api/exercises'),
+      canViewLessons.value ? api<LessonRead[]>('/api/lessons') : Promise.resolve([]),
+      canViewExercises.value ? api<ExerciseRead[]>('/api/exercises') : Promise.resolve([]),
     ])
     lessons.value = lessonList
     exercises.value = exerciseList
@@ -93,21 +113,26 @@ onMounted(loadDashboard)
     <p v-else-if="loading" class="notice">正在加载工作台数据...</p>
 
     <div class="metric-grid">
-      <article class="metric-card">
+      <article v-if="canViewLessons" class="metric-card">
         <span>已保存备课</span>
         <strong>{{ lessons.length }}</strong>
       </article>
-      <article class="metric-card">
+      <article v-if="canViewExercises" class="metric-card">
         <span>已保存习题</span>
         <strong>{{ exercises.length }}</strong>
       </article>
-      <article class="metric-card">
+      <article v-if="canViewLessons || canViewExercises" class="metric-card">
         <span>待关注合规风险</span>
         <strong>{{ riskyCount }}</strong>
       </article>
+      <article v-if="!canViewLessons && !canViewExercises" class="metric-card">
+        <span>学习入口</span>
+        <strong>{{ quickLinks.length }}</strong>
+        <small>班级、作业和公共资料</small>
+      </article>
     </div>
 
-    <div class="two-column-grid">
+    <div v-if="canViewLessons || canViewExercises" class="two-column-grid">
       <section class="panel stack">
         <div class="panel-title">
           <h2>最近备课</h2>
@@ -152,11 +177,7 @@ onMounted(loadDashboard)
     <section class="panel stack">
       <h2>常用入口</h2>
       <div class="quick-grid">
-        <RouterLink to="/dashboard/materials">机构知识库</RouterLink>
-        <RouterLink to="/dashboard/courses">课程体系</RouterLink>
-        <RouterLink to="/dashboard/questions">题库管理</RouterLink>
-        <RouterLink to="/dashboard/reviews">教研审核</RouterLink>
-        <RouterLink to="/dashboard/compliance">合规检查</RouterLink>
+        <RouterLink v-for="link in quickLinks" :key="link.to" :to="link.to">{{ link.label }}</RouterLink>
       </div>
     </section>
   </section>

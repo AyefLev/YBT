@@ -77,6 +77,7 @@ def index_material_vectors(db: Session, *, material: Material) -> VectorIndexRes
                 "vector": embed_text(
                     chunk.content,
                     dimensions=settings.embedding_dimensions,
+                    db=db,
                 ),
                 "payload": {
                     "chunk_id": chunk.id,
@@ -139,6 +140,7 @@ def delete_material_vectors(*, material_id: int) -> None:
 
 def search_vectors(
     *,
+    db: Session,
     query: str,
     top_k: int,
     material_ids: list[int],
@@ -175,7 +177,7 @@ def search_vectors(
         ]
 
     payload = {
-        "vector": embed_text(query, dimensions=settings.embedding_dimensions),
+        "vector": embed_text(query, dimensions=settings.embedding_dimensions, db=db),
         "limit": top_k,
         "with_payload": True,
         "with_vector": False,

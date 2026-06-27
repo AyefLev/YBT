@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
 import { api } from '../api/client'
 
@@ -26,6 +27,9 @@ interface AIProviderConfig {
   role: string
   base_url: string
   model: string
+  prompt_price_per_1k: number
+  completion_price_per_1k: number
+  currency: string
   enabled: boolean
   api_key_configured: boolean
   api_key_preview: string
@@ -33,6 +37,7 @@ interface AIProviderConfig {
 }
 
 const roles = ref<RoleRead[]>([])
+const route = useRoute()
 const users = ref<AdminUser[]>([])
 const applications = ref<AdminUser[]>([])
 const modelConfigs = ref<AIProviderConfig[]>([])
@@ -46,6 +51,9 @@ const email = ref('')
 const displayName = ref('')
 const password = ref('')
 const selectedRoles = ref('student')
+const pageMode = computed(() => String(route.meta.pageMode || 'users'))
+const showUsersPage = computed(() => pageMode.value === 'users')
+const showApiPage = computed(() => pageMode.value === 'api')
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback
@@ -107,6 +115,9 @@ async function saveModelConfig(config: AIProviderConfig) {
       body: JSON.stringify({
         base_url: config.base_url,
         model: config.model,
+        prompt_price_per_1k: config.prompt_price_per_1k,
+        completion_price_per_1k: config.completion_price_per_1k,
+        currency: config.currency,
         enabled: config.enabled,
         api_key: apiKey || undefined,
       }),
@@ -129,6 +140,7 @@ function modelRoleLabel(role: string): string {
     review: '审核模型',
     revise: '修订模型',
     vision: '视觉模型',
+    embedding: '向量模型',
   }
   return labels[role] ?? role
 }
@@ -239,8 +251,8 @@ onMounted(loadAdminData)
     <header class="page-hero">
       <div>
         <p class="eyebrow">管理</p>
-        <h1>系统管理</h1>
-        <p>管理员可以管理账号、角色、教师申请和全局教学资源；教师与学生的数据访问由后端权限控制。</p>
+        <h1>{{ showApiPage ? 'API 管理' : '用户管理' }}</h1>
+        <p>{{ showApiPage ? '维护生成、审核、视觉和向量模型 API，并配置费用估算参数。' : '管理账号、角色和教师申请；教师与学生的数据访问由后端权限控制。' }}</p>
       </div>
       <div class="hero-actions">
         <button type="button" class="btn-secondary" :disabled="loading === 'load'" @click="loadAdminData">
@@ -252,7 +264,7 @@ onMounted(loadAdminData)
     <p v-if="error" class="alert" role="alert">{{ error }}</p>
     <p v-if="notice" class="notice">{{ notice }}</p>
 
-    <section class="panel stack">
+    <section v-if="showUsersPage" class="panel stack">
       <h2>教师申请</h2>
       <p v-if="!applications.length" class="empty-state">暂无待审核教师申请。</p>
       <ul v-else class="clean-list">
@@ -271,7 +283,7 @@ onMounted(loadAdminData)
       </ul>
     </section>
 
-    <div class="two-column-grid">
+    <div v-if="showUsersPage" class="two-column-grid">
       <form class="panel stack" @submit.prevent="createUser">
         <h2>创建用户</h2>
         <label>
@@ -315,10 +327,10 @@ onMounted(loadAdminData)
       </section>
     </div>
 
-    <section class="panel stack">
+    <section v-if="showApiPage" class="panel stack">
       <div class="panel-title">
         <h2>模型 API 配置</h2>
-        <small>生成 / 审核 / 修订 / 视觉</small>
+        <small>生成 / 审核 / 修订 / 视觉 / 向量</small>
       </div>
       <p v-if="!modelConfigs.length" class="empty-state">暂无模型配置。</p>
       <ul v-else class="model-config-list">
@@ -339,6 +351,18 @@ onMounted(loadAdminData)
             <input v-model.trim="config.model" placeholder="model-name" />
           </label>
           <label>
+            输入单价/千token
+            <input v-model.number="config.prompt_price_per_1k" type="number" min="0" step="0.0001" />
+          </label>
+          <label>
+            输出单价/千token
+            <input v-model.number="config.completion_price_per_1k" type="number" min="0" step="0.0001" />
+          </label>
+          <label>
+            币种
+            <input v-model.trim="config.currency" placeholder="CNY" />
+          </label>
+          <label>
             新 API Key
             <input v-model.trim="modelApiKeys[config.role]" type="password" placeholder="留空则不修改" />
           </label>
@@ -351,7 +375,7 @@ onMounted(loadAdminData)
       </ul>
     </section>
 
-    <section class="panel stack">
+    <section v-if="showUsersPage" class="panel stack">
       <div class="panel-title">
         <h2>用户数据库</h2>
         <small>{{ users.length }} 个账号</small>
@@ -424,7 +448,7 @@ onMounted(loadAdminData)
 
 .model-config-list li {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) repeat(3, minmax(140px, 1fr)) auto auto;
+  grid-template-columns: minmax(150px, 0.9fr) repeat(6, minmax(120px, 1fr)) auto auto;
   gap: 10px;
   align-items: end;
   border-bottom: 1px solid var(--line);

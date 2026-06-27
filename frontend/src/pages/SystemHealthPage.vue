@@ -127,6 +127,7 @@ function roleLabel(role: string): string {
     review: '审核模型',
     revise: '修订模型',
     vision: '视觉模型',
+    embedding: '向量模型',
   }
   return labels[role] ?? role
 }

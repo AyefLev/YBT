@@ -38,7 +38,7 @@ def generate_exercise(
         chunks = search_chunks(
             db,
             query=payload.knowledge_point,
-            top_k=5,
+            top_k=payload.reference_count,
             material_ids=payload.material_ids,
             current_user=current_user,
         )
@@ -47,8 +47,9 @@ def generate_exercise(
     form = payload.model_dump()
     form["teaching_context"] = teaching_context
     form["lesson_context"] = lesson_context
+    form["retrieval_note"] = _retrieval_note(payload.retrieval_focus, payload.reference_count)
     prompt = build_exercise_prompt(form, [reference.content for reference in references])
-    ai_result = generate_text(db, "exercise", prompt)
+    ai_result = generate_text(db, "exercise", prompt, user_id=current_user.id)
     normalized_content = normalize_generated_math_text(ai_result.content)
     ai_result = ai_result.model_copy(update={"content": normalized_content})
     review = review_generated_content(
@@ -57,6 +58,7 @@ def generate_exercise(
         content=normalized_content,
         enabled=payload.multi_agent_review,
         auto_revise=payload.auto_revise,
+        user_id=current_user.id,
     )
     compliance = check_content(db, "exercise", normalized_content)
 
@@ -391,6 +393,15 @@ def _build_lesson_context(
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
     return f"教案：{lesson.title}\n{lesson.current_content[:2000]}"
+
+
+def _retrieval_note(focus: str, reference_count: int) -> str:
+    labels = {
+        "precise": "优先使用最贴近当前课程节点的少量资料，避免扩展过远。",
+        "balanced": "在相关性和覆盖面之间保持均衡。",
+        "broad": "允许参考更多相邻资料，用于补充背景和拓展案例。",
+    }
+    return f"{labels.get(focus, labels['balanced'])} 本次最多引用 {reference_count} 个资料片段。"
 
 
 def _validate_teaching_scope(

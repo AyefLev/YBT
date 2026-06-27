@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-import { TOKEN_KEY, api } from '../api/client'
+import { api, clearAuthToken, getAuthToken, setAuthToken } from '../api/client'
 
 export interface User {
   id: number
@@ -38,14 +38,14 @@ interface RegisterPayload extends LoginPayload {
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     user: null as User | null,
-    token: localStorage.getItem(TOKEN_KEY),
+    token: getAuthToken(),
     loading: false,
   }),
   actions: {
     clearSession() {
       this.user = null
       this.token = null
-      localStorage.removeItem(TOKEN_KEY)
+      clearAuthToken()
     },
     async loadMe() {
       try {
@@ -65,7 +65,7 @@ export const useAuthStore = defineStore('auth', {
           skipAuth: true,
         })
         this.token = token.access_token
-        localStorage.setItem(TOKEN_KEY, token.access_token)
+        setAuthToken(token.access_token)
         try {
           await this.loadMe()
         } catch (error) {

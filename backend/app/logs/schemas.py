@@ -19,9 +19,13 @@ class ModelLogRead(BaseModel):
     user_id: int | None
     task_type: str | None
     provider: str
+    api_role: str = ""
+    api_base_url: str = ""
     model: str
     prompt_tokens: int | None
     completion_tokens: int | None
+    estimated_cost: float = 0.0
+    cost_currency: str = "CNY"
     latency_ms: int | None
     success: bool
     fallback_used: bool
@@ -62,11 +66,40 @@ class LogSummaryRead(BaseModel):
     model_success: int
     model_failed: int
     mock_fallbacks: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost: float
+    cost_currency: str = "CNY"
     average_latency_ms: int
     job_total: int
     job_failed: int
     operation_total: int
     recent_errors: list[RecentErrorRead]
+
+
+class TokenUsageRead(BaseModel):
+    user_id: int | None
+    username: str = ""
+    display_name: str = ""
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost: float = 0.0
+    cost_currency: str = "CNY"
+    call_count: int
+
+
+class ModelUsageRead(BaseModel):
+    api_role: str
+    api_base_url: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost: float = 0.0
+    cost_currency: str = "CNY"
+    call_count: int
 
 
 class HealthComponentRead(BaseModel):

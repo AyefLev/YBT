@@ -1,11 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { api, apiBlob, downloadBlobResponse } from '../api/client'
+import MarkdownPreview from '../components/MarkdownPreview.vue'
 import MaterialPicker from '../components/MaterialPicker.vue'
 import { useAuthStore } from '../stores/auth'
 import { buildTeachingContextQuery, parseTeachingContextQuery } from './contextQuery'
+import {
+  clearGenerationDraft,
+  draftStorageKey,
+  loadGenerationDraft,
+  saveGenerationDraft,
+  type GenerationDraft,
+} from './generationDraft'
 import { lessonDefaultsFromContext } from './teachingContext'
 import { clearSelectionDependentState } from './workbenchSelection'
 
@@ -153,6 +161,7 @@ type PreviewBlock =
 
 const auth = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 const form = reactive({
   course_id: 0,
   chapter_id: 0,
@@ -167,6 +176,8 @@ const form = reactive({
   count: 5,
   use_materials: false,
   material_ids: '',
+  reference_count: 5,
+  retrieval_focus: 'balanced',
   prompt_template: '',
   output_format: '',
   multi_agent_review: true,
@@ -192,12 +203,48 @@ const providerStatus = ref<AIResult | null>(null)
 const loading = ref('')
 const error = ref('')
 const notice = ref('')
+const draftAvailable = ref(false)
+const ownerFilter = ref('all')
 
 const selectedExercise = computed(() =>
   exercises.value.find((exercise) => exercise.id === selectedExerciseId.value),
 )
 const canCreateExercises = computed(() => auth.user?.permissions.includes('exercise:create') ?? false)
 const canExportExercises = computed(() => auth.user?.permissions.includes('lesson:export') ?? false)
+const canViewAllExercises = computed(() => auth.user?.permissions.includes('exercise:view_all') ?? false)
+const isAdmin = computed(() => auth.user?.roles.includes('admin') ?? false)
+const isTeachingManager = computed(() => auth.user?.roles.includes('teaching_manager') ?? false)
+const showManagementRecords = computed(() => canViewAllExercises.value)
+const requestedPageMode = computed(() => String(route.meta.pageMode || 'generate'))
+const pageMode = computed(() => {
+  if (requestedPageMode.value === 'generate' && !canCreateExercises.value && canViewAllExercises.value) {
+    return 'records'
+  }
+  return requestedPageMode.value
+})
+const showGenerator = computed(() => canCreateExercises.value && pageMode.value === 'generate')
+const showRecords = computed(() => pageMode.value === 'records')
+const recordsTitle = computed(() => {
+  if (!showManagementRecords.value) return '我的练习'
+  return isAdmin.value ? '练习总览' : '教研练习总览'
+})
+const recordsDescription = computed(() => {
+  if (!showManagementRecords.value) return '查看、导出并复用自己保存的练习题。'
+  if (isTeachingManager.value) return '按教师筛选练习题，可用于教研检查和题库沉淀。'
+  return '按教师筛选查看练习归属、合规风险和版本记录。'
+})
+const exerciseOwnerOptions = computed(() => {
+  const owners = new Map<number, string>()
+  for (const exercise of exercises.value) {
+    owners.set(exercise.owner_id, exercise.owner_name || exercise.owner_username || `用户 ${exercise.owner_id}`)
+  }
+  return [...owners.entries()].map(([id, name]) => ({ id, name }))
+})
+const visibleExercises = computed(() => {
+  if (!showManagementRecords.value || ownerFilter.value === 'all') return exercises.value
+  const ownerId = Number(ownerFilter.value)
+  return exercises.value.filter((exercise) => exercise.owner_id === ownerId)
+})
 const selectedChapter = computed(() =>
   selectedCourse.value?.chapters.find((chapter) => chapter.id === form.chapter_id) ?? null,
 )
@@ -263,8 +310,8 @@ function riskLabel(value: string): string {
 
 function providerLabel(status: AIResult | null): string {
   if (!status) return '尚未生成'
-  if (status.fallback_used || status.provider === 'mock') return 'Mock 测试内容'
-  return '真实模型生成成功'
+  if (status.fallback_used || status.provider === 'mock') return '测试内容'
+  return '智能生成成功'
 }
 
 function providerClass(status: AIResult | null): string {
@@ -273,21 +320,11 @@ function providerClass(status: AIResult | null): string {
 }
 
 function capabilityText(): string {
-  if (!capabilities.value) return '正在读取模型能力...'
-  const generate = capabilities.value.generate_configured
-    ? `生成：${capabilities.value.generate_model}`
-    : '生成：未配置'
-  const reviewModel = capabilities.value.review_configured
-    ? `审核：${capabilities.value.review_model}`
-    : '审核：未配置'
-  const revise = capabilities.value.revise_configured
-    ? `修订：${capabilities.value.revise_model}`
-    : '修订：未配置'
-  const vision = capabilities.value.vision_configured
-    ? `视觉：${capabilities.value.vision_model}`
-    : '视觉：未配置'
-  const mock = capabilities.value.mock_on_failure ? 'Mock 兜底：开启' : 'Mock 兜底：关闭'
-  return `${generate}；${reviewModel}；${revise}；${vision}；${mock}`
+  if (!capabilities.value) return '正在读取智能生成状态...'
+  const generate = capabilities.value.generate_configured ? '生成服务可用' : '生成服务未配置'
+  const reviewModel = capabilities.value.multi_agent_review ? '自动复核开启' : '自动复核关闭'
+  const fallback = capabilities.value.mock_on_failure ? '失败时会提供测试内容' : '失败时不提供测试内容'
+  return `${generate}；${reviewModel}；${fallback}`
 }
 
 function setMessage(message = '') {
@@ -298,6 +335,50 @@ function setMessage(message = '') {
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback
   notice.value = ''
+}
+
+function currentDraft(status: GenerationDraft<Record<string, unknown>>['status']) {
+  return {
+    form: { ...form },
+    content: content.value,
+    selectedMaterialIds: [...selectedMaterialIds.value],
+    generatedContent: generatedContent.value,
+    compliance: compliance.value,
+    review: review.value,
+    references: references.value,
+    providerStatus: providerStatus.value,
+    status,
+  }
+}
+
+function persistDraft(status: GenerationDraft<Record<string, unknown>>['status'] = 'editing') {
+  if (!canCreateExercises.value || !auth.user) return
+  saveGenerationDraft(draftStorageKey('exercise', auth.user.id), currentDraft(status))
+  draftAvailable.value = true
+}
+
+async function restoreDraft() {
+  if (!canCreateExercises.value || !auth.user) return
+  const draft = loadGenerationDraft<Record<string, unknown>>(draftStorageKey('exercise', auth.user.id))
+  if (!draft) return
+  Object.assign(form, draft.form)
+  content.value = draft.content || ''
+  selectedMaterialIds.value = draft.selectedMaterialIds || []
+  generatedContent.value = draft.generatedContent || ''
+  compliance.value = draft.compliance as Compliance | null
+  review.value = draft.review as AIReview | null
+  references.value = (draft.references || []) as ExerciseGenerateResponse['references']
+  providerStatus.value = (draft.providerStatus || null) as AIResult | null
+  draftAvailable.value = true
+  if (form.course_id) await loadCourseDetail(form.course_id)
+  setMessage(draft.status === 'generating' ? '已恢复生成中的未保存习题草稿。' : '已恢复未保存习题草稿。')
+}
+
+function discardDraft() {
+  if (!auth.user) return
+  clearGenerationDraft(draftStorageKey('exercise', auth.user.id))
+  draftAvailable.value = false
+  setMessage('未保存草稿已清除。')
 }
 
 function fillFromExercise(exercise: ExerciseRead, clearDependentState = false) {
@@ -323,6 +404,27 @@ function fillFromExercise(exercise: ExerciseRead, clearDependentState = false) {
   form.prompt_template = exercise.prompt_template
   form.output_format = exercise.output_format
   content.value = normalizeGeneratedMathText(exercise.current_content)
+}
+
+function canReuseExercise(exercise: ExerciseRead): boolean {
+  if (!canCreateExercises.value) return false
+  return exercise.owner_id === auth.user?.id || isTeachingManager.value
+}
+
+function reuseExerciseLabel(exercise: ExerciseRead): string {
+  return exercise.owner_id === auth.user?.id ? '继续编辑' : '复用生成'
+}
+
+async function reuseExercise(exercise: ExerciseRead) {
+  fillFromExercise(exercise, true)
+  if (exercise.owner_id !== auth.user?.id) {
+    selectedExerciseId.value = null
+    form.title = `${exercise.title}（副本）`
+  }
+  if (form.course_id) await loadCourseDetail(form.course_id)
+  await router.push('/dashboard/exercise/generate')
+  persistDraft('editing')
+  setMessage(exercise.owner_id === auth.user?.id ? '已载入自己的习题，可继续编辑后保存。' : '已载入该习题内容，可基于它生成新的习题。')
 }
 
 async function loadCourses() {
@@ -402,6 +504,7 @@ async function generateExercise() {
   loading.value = 'generate'
   providerStatus.value = null
   setMessage()
+  persistDraft('generating')
   try {
     const result = await api<ExerciseGenerateResponse>('/api/exercises/generate', {
       method: 'POST',
@@ -419,6 +522,8 @@ async function generateExercise() {
         count: form.count,
         use_materials: form.use_materials,
         material_ids: materialIds(),
+        reference_count: form.reference_count,
+        retrieval_focus: form.retrieval_focus,
         prompt_template: form.prompt_template,
         output_format: form.output_format,
         multi_agent_review: form.multi_agent_review,
@@ -432,10 +537,11 @@ async function generateExercise() {
     references.value = result.references
     providerStatus.value = result.provider_status
     generatedContent.value = normalizedContent
+    persistDraft('generated')
     setMessage(
       result.provider_status.fallback_used
-        ? '已生成 Mock 测试内容，请检查真实模型配置。'
-        : '习题已由真实模型生成，可继续编辑后保存。',
+        ? '已生成测试内容，请管理员检查智能生成服务配置。'
+        : '习题已生成，可继续编辑后保存。',
     )
   } catch (err) {
     setError(err, '习题生成失败')
@@ -449,6 +555,7 @@ function adoptRevisedContent() {
   if (!revisedPreviewContent.value) return
   content.value = revisedPreviewContent.value
   generatedContent.value = revisedPreviewContent.value
+  persistDraft('generated')
   setMessage('已采用 AI 修订稿，可继续编辑后保存。')
 }
 
@@ -477,6 +584,10 @@ async function saveExercise() {
       }),
     })
     fillFromExercise(saved, true)
+    if (auth.user) {
+      clearGenerationDraft(draftStorageKey('exercise', auth.user.id))
+      draftAvailable.value = false
+    }
     await loadExercises()
     setMessage('习题已保存。')
   } catch (err) {
@@ -636,16 +747,25 @@ function normalizeInlineLatex(value: string): string {
 onMounted(async () => {
   await Promise.all([loadCapabilities(), loadExercises(), loadCourses(), loadLessons(), loadMaterials()])
   await applyRouteContext()
+  await restoreDraft()
 })
+
+onBeforeUnmount(() => {
+  persistDraft(loading.value === 'generate' ? 'generating' : 'editing')
+})
+
+watch([form, content, selectedMaterialIds], () => {
+  persistDraft(loading.value === 'generate' ? 'generating' : 'editing')
+}, { deep: true })
 </script>
 
 <template>
   <section class="page-shell">
     <header class="page-hero">
       <div>
-        <p class="eyebrow">习题</p>
-        <h1>习题生成</h1>
-        <p>按知识点、题型与难度生成练习，支持公式、矩阵、表格和可渲染示意图。</p>
+        <p class="eyebrow">练习题</p>
+        <h1>{{ pageMode === 'records' ? recordsTitle : '生成练习' }}</h1>
+        <p>{{ pageMode === 'records' ? recordsDescription : '按知识点、题型与难度生成练习，支持公式、矩阵、表格和可渲染示意图。' }}</p>
       </div>
       <button v-if="canExportExercises" type="button" class="btn-secondary" :disabled="!selectedExerciseId || loading === 'export'" @click="exportExercise()">
         {{ loading === 'export' ? '导出中...' : '导出 DOCX' }}
@@ -654,8 +774,12 @@ onMounted(async () => {
 
     <p v-if="error" class="alert" role="alert">{{ error }}</p>
     <p v-if="notice" class="notice">{{ notice }}</p>
+    <p v-if="draftAvailable && canCreateExercises" class="draft-banner">
+      当前页面有未保存草稿，切换页面后会自动保留。
+      <button type="button" class="btn-secondary" @click="discardDraft">清除草稿</button>
+    </p>
 
-    <section class="panel model-card">
+    <section v-if="showGenerator" class="panel model-card">
       <div>
         <h2>模型状态</h2>
         <p>{{ capabilityText() }}</p>
@@ -665,7 +789,7 @@ onMounted(async () => {
       </span>
     </section>
 
-    <div v-if="canCreateExercises" class="editor-grid">
+    <div v-if="showGenerator" class="editor-grid">
       <form class="panel form-grid" @submit.prevent="generateExercise">
         <label>
           课程
@@ -759,9 +883,23 @@ onMounted(async () => {
             :context-ids="contextIds"
             :disabled="!form.use_materials"
           />
+          <div class="retrieval-grid">
+            <label>
+              参考资料数量
+              <input v-model.number="form.reference_count" type="number" min="1" max="20" />
+            </label>
+            <label>
+              检索侧重点
+              <select v-model="form.retrieval_focus">
+                <option value="precise">更精准</option>
+                <option value="balanced">均衡</option>
+                <option value="broad">更宽泛</option>
+              </select>
+            </label>
+          </div>
           <RouterLink
             class="inline-action"
-            :to="{ path: '/dashboard/materials', query: { ...buildTeachingContextQuery(contextIds), return_to: '/dashboard/exercise' } }"
+            :to="{ path: '/dashboard/materials/upload', query: { ...buildTeachingContextQuery(contextIds), return_to: '/dashboard/exercise/generate' } }"
           >
             上传当前课程资料
           </RouterLink>
@@ -798,7 +936,7 @@ onMounted(async () => {
             <p v-if="!content" class="empty-state">生成内容后会在这里预览公式、矩阵和示意图。</p>
             <div v-else class="preview-blocks">
               <template v-for="(block, index) in visiblePreviewBlocks" :key="index">
-                <pre v-if="block.type === 'text'" class="text-block">{{ block.content }}</pre>
+                <MarkdownPreview v-if="block.type === 'text'" :content="block.content" />
                 <div v-else-if="block.type === 'formula'" class="formula-block">
                   <table v-if="block.matrixRows" class="matrix-preview">
                     <tbody>
@@ -841,8 +979,8 @@ onMounted(async () => {
         </div>
 
         <div v-if="providerStatus" class="result-card">
-          <strong>生成来源：{{ providerLabel(providerStatus) }}</strong>
-          <p>模型：{{ providerStatus.model }}</p>
+          <strong>生成状态：{{ providerLabel(providerStatus) }}</strong>
+          <p>服务：{{ providerStatus.fallback_used ? '测试服务' : '智能生成服务' }}</p>
           <p v-if="providerStatus.error_message">错误：{{ providerStatus.error_message }}</p>
         </div>
 
@@ -857,7 +995,7 @@ onMounted(async () => {
             <strong>AI 修订稿</strong>
             <button type="button" class="btn-secondary" @click="adoptRevisedContent">采用修订稿</button>
           </div>
-          <pre>{{ revisedPreviewContent }}</pre>
+          <MarkdownPreview :content="revisedPreviewContent" />
         </div>
 
         <div v-if="references.length" class="result-card">
@@ -869,21 +1007,40 @@ onMounted(async () => {
       </section>
     </div>
 
-    <section class="panel stack">
-      <h2>已保存习题</h2>
-      <p v-if="!exercises.length" class="empty-state">暂无习题记录。</p>
+    <section v-if="showRecords" class="panel stack">
+      <div class="panel-title">
+        <div>
+          <h2>{{ recordsTitle }}</h2>
+          <small>{{ showManagementRecords ? '全局记录会标注所属教师，管理员默认只查看和运维。' : '只显示当前账号创建的练习。' }}</small>
+        </div>
+        <label v-if="showManagementRecords && exerciseOwnerOptions.length" class="compact-filter">
+          所属教师
+          <select v-model="ownerFilter">
+            <option value="all">全部教师</option>
+            <option v-for="owner in exerciseOwnerOptions" :key="owner.id" :value="String(owner.id)">
+              {{ owner.name }}
+            </option>
+          </select>
+        </label>
+      </div>
+      <p v-if="!visibleExercises.length" class="empty-state">暂无习题记录。</p>
       <ul v-else class="item-list">
-        <li v-for="exercise in exercises" :key="exercise.id" :class="{ active: exercise.id === selectedExerciseId }">
+        <li v-for="exercise in visibleExercises" :key="exercise.id" :class="{ active: exercise.id === selectedExerciseId }">
           <div class="stack">
             <strong>{{ exercise.title }}</strong>
             <small>
               {{ exercise.subject }} · {{ exercise.knowledge_point }}
-              · 所属教师 {{ exercise.owner_name || exercise.owner_username || `用户 ${exercise.owner_id}` }}
+              <template v-if="showManagementRecords">
+                · 所属教师 {{ exercise.owner_name || exercise.owner_username || `用户 ${exercise.owner_id}` }}
+              </template>
               <span class="status-pill" :class="exercise.compliance_level">{{ riskLabel(exercise.compliance_level) }}</span>
               {{ formatDate(exercise.updated_at) }}
             </small>
           </div>
           <div class="actions">
+            <button v-if="canReuseExercise(exercise)" type="button" class="btn-secondary" @click="reuseExercise(exercise)">
+              {{ reuseExerciseLabel(exercise) }}
+            </button>
             <button type="button" class="btn-secondary" @click="loadVersions(exercise)">版本</button>
             <button
               v-if="canCreateExercises"
@@ -906,7 +1063,7 @@ onMounted(async () => {
         <li v-for="version in versions" :key="version.id">
           <strong>版本 {{ version.version_no }}</strong>
           <small>{{ version.change_note || '无说明' }} · {{ formatDate(version.created_at) }}</small>
-          <p>{{ version.content }}</p>
+          <MarkdownPreview :content="version.content" />
         </li>
       </ul>
     </section>
@@ -955,6 +1112,13 @@ onMounted(async () => {
   border-radius: 8px;
   padding: 12px;
   background: var(--surface-soft);
+}
+
+.retrieval-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .preview-blocks {
@@ -1076,15 +1240,6 @@ onMounted(async () => {
   justify-content: space-between;
 }
 
-.revision-card pre {
-  max-height: 260px;
-  margin: 0;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-family: inherit;
-  line-height: 1.55;
-}
-
 .item-list {
   display: grid;
   gap: 12px;
@@ -1107,6 +1262,10 @@ onMounted(async () => {
   background: #eff6ff;
 }
 
+.compact-filter {
+  max-width: 220px;
+}
+
 @media (max-width: 1180px) {
   .content-grid {
     grid-template-columns: 1fr;
@@ -1115,6 +1274,7 @@ onMounted(async () => {
 
 @media (max-width: 940px) {
   .editor-grid,
+  .retrieval-grid,
   .item-list li,
   .model-card {
     display: grid;

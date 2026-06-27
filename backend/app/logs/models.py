@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -27,9 +27,13 @@ class ModelLog(Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     task_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     provider: Mapped[str] = mapped_column(String(64))
+    api_role: Mapped[str] = mapped_column(String(32), default="")
+    api_base_url: Mapped[str] = mapped_column(String(1024), default="")
     model: Mapped[str] = mapped_column(String(128))
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    estimated_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    cost_currency: Mapped[str] = mapped_column(String(16), default="CNY")
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)

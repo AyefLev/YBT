@@ -26,7 +26,9 @@ from app.retrieval.vector_store import (
 )
 from app.tasks.queue import enqueue_task
 
-CHUNK_SIZE = 800
+DEFAULT_CHUNK_SIZE = 800
+DEFAULT_CHUNK_OVERLAP = 80
+CHUNK_STRATEGIES = {"fixed", "paragraph", "parent_child"}
 _PARSE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="material-parser")
 
 
@@ -41,6 +43,9 @@ def create_material_record_from_upload(
     chapter_id: int | None = None,
     session_id: int | None = None,
     knowledge_point_id: int | None = None,
+    chunk_strategy: str = "fixed",
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
     tags: str | list[str] | None = None,
     upload: UploadFile,
     uploader: User,
@@ -61,6 +66,7 @@ def create_material_record_from_upload(
         session_id=session_id,
         knowledge_point_id=knowledge_point_id,
     )
+    normalized_chunk_size = _normalize_chunk_size(chunk_size)
     saved_path = _save_upload(upload, suffix)
     material = Material(
         title=title,
@@ -71,6 +77,9 @@ def create_material_record_from_upload(
         chapter_id=chapter_id,
         session_id=session_id,
         knowledge_point_id=knowledge_point_id,
+        chunk_strategy=_normalize_chunk_strategy(chunk_strategy),
+        chunk_size=normalized_chunk_size,
+        chunk_overlap=_normalize_chunk_overlap(chunk_overlap, normalized_chunk_size),
         tags_json=_encode_tags(tags),
         file_name=original_name,
         file_type=suffix,
@@ -364,7 +373,12 @@ def _replace_chunks(
 
     chunk_index = 0
     for parsed in parsed_texts:
-        for content in _split_text(parsed.content):
+        for content in _split_text(
+            parsed.content,
+            strategy=material.chunk_strategy,
+            chunk_size=material.chunk_size,
+            chunk_overlap=material.chunk_overlap,
+        ):
             chunk = MaterialChunk(
                 material_id=material.id,
                 chunk_index=chunk_index,
@@ -391,33 +405,96 @@ def _save_upload(upload: UploadFile, suffix: str) -> Path:
     return saved_path
 
 
-def _split_text(text: str) -> list[str]:
+def _split_text(
+    text: str,
+    *,
+    strategy: str = "fixed",
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> list[str]:
     paragraphs = [line.strip() for line in text.splitlines() if line.strip()]
     normalized = "\n".join(paragraphs).strip()
     if not normalized:
         return []
 
-    chunks: list[str] = []
-    current = ""
+    strategy = _normalize_chunk_strategy(strategy)
+    chunk_size = _normalize_chunk_size(chunk_size)
+    chunk_overlap = _normalize_chunk_overlap(chunk_overlap, chunk_size)
+    if strategy == "paragraph":
+        return paragraphs
+    if strategy == "parent_child":
+        return _split_parent_child(paragraphs, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    return _split_with_overlap(normalized, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+
+def _split_parent_child(
+    paragraphs: list[str],
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[str]:
+    parents: list[str] = []
+    current: list[str] = []
     for paragraph in paragraphs:
-        candidate = f"{current}\n{paragraph}".strip() if current else paragraph
-        if len(candidate) <= CHUNK_SIZE:
-            current = candidate
-            continue
-        if current:
-            chunks.append(current)
-        if len(paragraph) <= CHUNK_SIZE:
-            current = paragraph
+        is_heading = len(paragraph) <= 80 and (
+            paragraph.startswith(("#", "第"))
+            or paragraph.endswith(("章", "节", "课", "：", ":"))
+        )
+        if is_heading and current:
+            parents.append("\n".join(current))
+            current = [paragraph]
         else:
-            chunks.extend(
-                paragraph[index : index + CHUNK_SIZE].strip()
-                for index in range(0, len(paragraph), CHUNK_SIZE)
-                if paragraph[index : index + CHUNK_SIZE].strip()
-            )
-            current = ""
+            current.append(paragraph)
     if current:
-        chunks.append(current)
+        parents.append("\n".join(current))
+
+    chunks: list[str] = []
+    for parent in parents:
+        chunks.extend(_split_with_overlap(parent, chunk_size=chunk_size, chunk_overlap=chunk_overlap))
     return chunks
+
+
+def _split_with_overlap(text: str, *, chunk_size: int, chunk_overlap: int) -> list[str]:
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(len(text), start + chunk_size)
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        if end >= len(text):
+            break
+        start = max(end - chunk_overlap, start + 1)
+    return chunks
+
+
+def _normalize_chunk_strategy(value: str) -> str:
+    normalized = (value or "fixed").strip().lower()
+    if normalized not in CHUNK_STRATEGIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="chunk_strategy must be fixed, paragraph, or parent_child",
+        )
+    return normalized
+
+
+def _normalize_chunk_size(value: int) -> int:
+    if value < 200 or value > 4000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="chunk_size must be between 200 and 4000",
+        )
+    return value
+
+
+def _normalize_chunk_overlap(value: int, chunk_size: int) -> int:
+    if value < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="chunk_overlap must be greater than or equal to 0",
+        )
+    return min(value, max(0, chunk_size // 2))
 
 
 def _encode_tags(tags: str | list[str] | None) -> str:

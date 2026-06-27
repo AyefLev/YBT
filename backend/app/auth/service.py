@@ -10,6 +10,7 @@ from app.core.security import create_access_token, get_password_hash, verify_pas
 
 AUTO_ADD_PERMISSION_CODES = {
     "review:manage",
+    "material:view_public",
     "material:publish_public",
     "material:manage_all",
     "course:create",

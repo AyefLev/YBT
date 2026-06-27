@@ -60,8 +60,11 @@ def _apply_common_compatibility_migrations(engine: Engine) -> None:
     _apply_users_account_migration(engine, inspector)
     _apply_material_resource_scope_migration(engine, inspector)
     _apply_material_teaching_scope_migration(engine, inspector)
+    _apply_material_chunking_migration(engine, inspector)
     _apply_lesson_teaching_scope_migration(engine, inspector)
     _apply_exercise_teaching_scope_migration(engine, inspector)
+    _apply_model_log_token_migration(engine, inspector)
+    _apply_ai_provider_pricing_migration(engine, inspector)
 
 
 def _apply_users_account_migration(engine: Engine, inspector) -> None:
@@ -119,6 +122,19 @@ def _apply_material_teaching_scope_migration(engine: Engine, inspector) -> None:
     )
 
 
+def _apply_material_chunking_migration(engine: Engine, inspector) -> None:
+    _apply_columns_if_missing(
+        engine,
+        inspector,
+        table_name="materials",
+        migrations={
+            "chunk_strategy": "ALTER TABLE materials ADD COLUMN chunk_strategy VARCHAR(32) NOT NULL DEFAULT 'fixed'",
+            "chunk_size": "ALTER TABLE materials ADD COLUMN chunk_size INTEGER NOT NULL DEFAULT 800",
+            "chunk_overlap": "ALTER TABLE materials ADD COLUMN chunk_overlap INTEGER NOT NULL DEFAULT 80",
+        },
+    )
+
+
 def _apply_lesson_teaching_scope_migration(engine: Engine, inspector) -> None:
     _apply_columns_if_missing(
         engine,
@@ -150,6 +166,36 @@ def _apply_exercise_teaching_scope_migration(engine: Engine, inspector) -> None:
             "material_ids_json": "ALTER TABLE exercises ADD COLUMN material_ids_json TEXT NOT NULL DEFAULT '[]'",
             "prompt_template": "ALTER TABLE exercises ADD COLUMN prompt_template TEXT NOT NULL DEFAULT ''",
             "output_format": "ALTER TABLE exercises ADD COLUMN output_format TEXT NOT NULL DEFAULT ''",
+        },
+    )
+
+
+def _apply_model_log_token_migration(engine: Engine, inspector) -> None:
+    _apply_columns_if_missing(
+        engine,
+        inspector,
+        table_name="model_logs",
+        migrations={
+            "user_id": "ALTER TABLE model_logs ADD COLUMN user_id INTEGER",
+            "prompt_tokens": "ALTER TABLE model_logs ADD COLUMN prompt_tokens INTEGER",
+            "completion_tokens": "ALTER TABLE model_logs ADD COLUMN completion_tokens INTEGER",
+            "api_role": "ALTER TABLE model_logs ADD COLUMN api_role VARCHAR(32) NOT NULL DEFAULT ''",
+            "api_base_url": "ALTER TABLE model_logs ADD COLUMN api_base_url VARCHAR(1024) NOT NULL DEFAULT ''",
+            "estimated_cost": "ALTER TABLE model_logs ADD COLUMN estimated_cost FLOAT NOT NULL DEFAULT 0",
+            "cost_currency": "ALTER TABLE model_logs ADD COLUMN cost_currency VARCHAR(16) NOT NULL DEFAULT 'CNY'",
+        },
+    )
+
+
+def _apply_ai_provider_pricing_migration(engine: Engine, inspector) -> None:
+    _apply_columns_if_missing(
+        engine,
+        inspector,
+        table_name="ai_provider_configs",
+        migrations={
+            "prompt_price_per_1k": "ALTER TABLE ai_provider_configs ADD COLUMN prompt_price_per_1k FLOAT NOT NULL DEFAULT 0",
+            "completion_price_per_1k": "ALTER TABLE ai_provider_configs ADD COLUMN completion_price_per_1k FLOAT NOT NULL DEFAULT 0",
+            "currency": "ALTER TABLE ai_provider_configs ADD COLUMN currency VARCHAR(16) NOT NULL DEFAULT 'CNY'",
         },
     )
 

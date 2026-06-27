@@ -7,8 +7,10 @@ import { useAuthStore } from './auth'
 describe('auth store', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.stubGlobal('localStorage', createLocalStorage())
+    vi.stubGlobal('localStorage', createStorage())
+    vi.stubGlobal('sessionStorage', createStorage())
     localStorage.clear()
+    sessionStorage.clear()
     setActivePinia(createPinia())
   })
 
@@ -41,11 +43,12 @@ describe('auth store', () => {
     )
     expect(auth.token).toBeNull()
     expect(auth.user).toBeNull()
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull()
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull()
   })
 
   test('clears a stale session when loadMe fails', async () => {
-    localStorage.setItem(TOKEN_KEY, 'stale-token')
+    sessionStorage.setItem(TOKEN_KEY, 'stale-token')
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -65,11 +68,12 @@ describe('auth store', () => {
     await expect(auth.loadMe()).rejects.toThrow('invalid token')
     expect(auth.token).toBeNull()
     expect(auth.user).toBeNull()
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull()
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull()
   })
 })
 
-function createLocalStorage(): Storage {
+function createStorage(): Storage {
   const store = new Map<string, string>()
   return {
     get length() {

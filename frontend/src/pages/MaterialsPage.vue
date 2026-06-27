@@ -19,6 +19,9 @@ interface MaterialRead {
   chapter_id: number | null
   session_id: number | null
   knowledge_point_id: number | null
+  chunk_strategy: string
+  chunk_size: number
+  chunk_overlap: number
   tags: string[]
   file_name: string
   file_type: string
@@ -103,6 +106,9 @@ const purpose = ref('')
 const resourceScope = ref('personal')
 const tags = ref('')
 const file = ref<File | null>(null)
+const chunkStrategy = ref('fixed')
+const chunkSize = ref(800)
+const chunkOverlap = ref(80)
 const courses = ref<Course[]>([])
 const selectedCourse = ref<CourseDetail | null>(null)
 const courseId = ref(0)
@@ -121,8 +127,12 @@ const loading = ref('')
 const error = ref('')
 const notice = ref('')
 const returnTo = ref('')
+const canUploadMaterial = computed(() => auth.user?.permissions.includes('material:upload') ?? false)
 const canPublishPublic = computed(() => auth.user?.permissions.includes('material:publish_public') ?? false)
 const canManageAllMaterials = computed(() => auth.user?.permissions.includes('material:manage_all') ?? false)
+const pageMode = computed(() => String(route.meta.pageMode || 'library'))
+const showUploadPage = computed(() => canUploadMaterial.value && pageMode.value === 'upload')
+const showLibraryPage = computed(() => pageMode.value === 'library')
 const availableSessions = computed(() => {
   if (!selectedCourse.value) return []
   return selectedCourse.value.chapters
@@ -167,6 +177,15 @@ function scopeLabel(scope: string): string {
     public: '公共资源',
   }
   return labels[scope] ?? scope
+}
+
+function chunkStrategyLabel(strategy: string): string {
+  const labels: Record<string, string> = {
+    fixed: '按长度切分',
+    paragraph: '按自然段切分',
+    parent_child: '按标题层级切分',
+  }
+  return labels[strategy] ?? strategy
 }
 
 function canManageMaterial(material: MaterialRead): boolean {
@@ -262,6 +281,9 @@ async function uploadMaterial() {
     form.set('resource_scope', resourceScope.value)
     form.set('tags', tags.value)
     form.set('file', file.value)
+    form.set('chunk_strategy', chunkStrategy.value)
+    form.set('chunk_size', String(chunkSize.value))
+    form.set('chunk_overlap', String(chunkOverlap.value))
     if (courseId.value) form.set('course_id', String(courseId.value))
     if (chapterId.value) form.set('chapter_id', String(chapterId.value))
     if (sessionId.value) form.set('session_id', String(sessionId.value))
@@ -382,9 +404,9 @@ onMounted(async () => {
   <section class="page-shell">
     <header class="page-hero">
       <div>
-        <p class="eyebrow">知识库</p>
-        <h1>机构知识库</h1>
-        <p>上传教材、讲义或课件，后台解析后可用于备课、习题生成和材料检索。</p>
+        <p class="eyebrow">资料库</p>
+        <h1>{{ pageMode === 'upload' ? '上传资料' : (canUploadMaterial ? '教学资料库' : '公共资料库') }}</h1>
+        <p>{{ pageMode === 'upload' ? '上传教材、讲义或课件，并设置课程归属、切片方式和资源域。' : (canUploadMaterial ? '查看资料解析状态、预览内容，并检索相关片段。' : '查看机构公开资料，预览资料片段并按问题检索相关内容。') }}</p>
       </div>
     </header>
 
@@ -394,8 +416,8 @@ onMounted(async () => {
       返回生成页面
     </RouterLink>
 
-    <div class="two-column-grid">
-      <form class="panel stack" @submit.prevent="uploadMaterial">
+    <div v-if="showUploadPage || showLibraryPage" class="two-column-grid">
+      <form v-if="showUploadPage" class="panel stack" @submit.prevent="uploadMaterial">
         <h2>上传材料</h2>
         <label>
           材料标题
@@ -420,6 +442,24 @@ onMounted(async () => {
           标签
           <input v-model.trim="tags" placeholder="多个标签用英文逗号分隔" />
         </label>
+        <div class="scope-grid">
+          <label>
+            切片方式
+            <select v-model="chunkStrategy">
+              <option value="fixed">按长度切分</option>
+              <option value="paragraph">按自然段切分</option>
+              <option value="parent_child">按标题层级切分</option>
+            </select>
+          </label>
+          <label>
+            每段长度
+            <input v-model.number="chunkSize" type="number" min="200" max="4000" step="50" />
+          </label>
+          <label>
+            相邻重叠
+            <input v-model.number="chunkOverlap" type="number" min="0" max="2000" step="20" />
+          </label>
+        </div>
         <label>
           关联课程
           <select v-model.number="courseId" @change="selectCourse">
@@ -467,7 +507,12 @@ onMounted(async () => {
         </button>
       </form>
 
-      <form class="panel stack" @submit.prevent="searchMaterials">
+      <section v-else-if="pageMode === 'upload'" class="panel stack">
+        <h2>公共资料</h2>
+        <p class="empty-state">当前账号只能查看公开资料，上传和重新解析由教师或管理员完成。</p>
+      </section>
+
+      <form v-if="showLibraryPage" class="panel stack" @submit.prevent="searchMaterials">
         <h2>检索材料</h2>
         <label>
           检索问题
@@ -483,7 +528,7 @@ onMounted(async () => {
       </form>
     </div>
 
-    <section class="panel stack">
+    <section v-if="showLibraryPage" class="panel stack">
       <div class="panel-title">
         <h2>材料列表</h2>
         <button type="button" class="btn-secondary" @click="loadMaterials">刷新</button>
@@ -499,6 +544,11 @@ onMounted(async () => {
               · 上传人 {{ material.uploader_name || material.uploader_username || `用户 ${material.uploader_id}` }}
               <span class="status-pill" :class="material.parse_status">{{ statusLabel(material.parse_status) }}</span>
               {{ material.chunk_count }} 个片段
+            </small>
+            <small>
+              切片：{{ chunkStrategyLabel(material.chunk_strategy) }}
+              · 每段约 {{ material.chunk_size }} 字
+              · 重叠 {{ material.chunk_overlap }} 字
             </small>
             <p v-if="material.tags.length" class="tags">{{ material.tags.join(' / ') }}</p>
             <p
@@ -518,7 +568,7 @@ onMounted(async () => {
             </p>
           </div>
           <div class="actions">
-            <button type="button" class="btn-secondary" @click="loadChunks(material)">片段</button>
+            <button type="button" class="btn-secondary" @click="loadChunks(material)">预览内容</button>
             <button type="button" class="btn-secondary" @click="loadParseStatus(material)">解析状态</button>
             <button v-if="canManageMaterial(material)" type="button" class="btn-secondary" @click="reparseMaterial(material)">重新解析</button>
             <button v-if="canManageMaterial(material)" type="button" class="btn-danger" @click="deleteMaterial(material)">删除</button>
@@ -527,8 +577,8 @@ onMounted(async () => {
       </ul>
     </section>
 
-    <section v-if="selectedChunks.length" class="panel stack">
-      <h2>材料片段</h2>
+    <section v-if="showLibraryPage && selectedChunks.length" class="panel stack">
+      <h2>资料内容预览</h2>
       <ul class="clean-list">
         <li v-for="chunk in selectedChunks" :key="chunk.id">
           <strong>片段 {{ chunk.chunk_index + 1 }}</strong>
@@ -541,7 +591,7 @@ onMounted(async () => {
       </ul>
     </section>
 
-    <section class="panel stack">
+    <section v-if="showLibraryPage" class="panel stack">
       <div class="panel-title">
         <h2>检索结果</h2>
         <span v-if="retrievalCacheHit !== null" class="status-pill" :class="retrievalCacheHit ? 'parsed' : 'pending'">

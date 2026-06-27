@@ -38,6 +38,7 @@ def search_chunks_with_mode(
 ) -> tuple[list[RetrievedChunk], str]:
     try:
         vector_hits = search_vectors(
+            db=db,
             query=query,
             top_k=top_k,
             material_ids=material_ids,

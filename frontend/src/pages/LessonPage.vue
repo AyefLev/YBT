@@ -1,11 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { api, apiBlob, downloadBlobResponse } from '../api/client'
+import MarkdownPreview from '../components/MarkdownPreview.vue'
 import MaterialPicker from '../components/MaterialPicker.vue'
 import { useAuthStore } from '../stores/auth'
 import { buildTeachingContextQuery, parseTeachingContextQuery } from './contextQuery'
+import {
+  clearGenerationDraft,
+  draftStorageKey,
+  loadGenerationDraft,
+  saveGenerationDraft,
+  type GenerationDraft,
+} from './generationDraft'
 import { lessonDefaultsFromContext } from './teachingContext'
 import { clearSelectionDependentState } from './workbenchSelection'
 
@@ -116,6 +124,7 @@ interface PresentationResponse {
 
 const auth = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 const form = reactive({
   course_id: 0,
   chapter_id: 0,
@@ -130,6 +139,8 @@ const form = reactive({
   teaching_goal: '',
   use_materials: false,
   material_ids: '',
+  reference_count: 5,
+  retrieval_focus: 'balanced',
   prompt_template: '',
   output_format: '',
   change_note: '首次保存',
@@ -151,10 +162,46 @@ const loading = ref('')
 const error = ref('')
 const notice = ref('')
 const presentationMessage = ref('')
+const draftAvailable = ref(false)
+const ownerFilter = ref('all')
 
 const selectedLesson = computed(() => lessons.value.find((lesson) => lesson.id === selectedLessonId.value))
 const canCreateLessons = computed(() => auth.user?.permissions.includes('lesson:create') ?? false)
 const canExportLessons = computed(() => auth.user?.permissions.includes('lesson:export') ?? false)
+const canViewAllLessons = computed(() => auth.user?.permissions.includes('lesson:view_all') ?? false)
+const isAdmin = computed(() => auth.user?.roles.includes('admin') ?? false)
+const isTeachingManager = computed(() => auth.user?.roles.includes('teaching_manager') ?? false)
+const showManagementRecords = computed(() => canViewAllLessons.value)
+const requestedPageMode = computed(() => String(route.meta.pageMode || 'generate'))
+const pageMode = computed(() => {
+  if (requestedPageMode.value === 'generate' && !canCreateLessons.value && canViewAllLessons.value) {
+    return 'records'
+  }
+  return requestedPageMode.value
+})
+const showGenerator = computed(() => canCreateLessons.value && pageMode.value === 'generate')
+const showRecords = computed(() => pageMode.value === 'records')
+const recordsTitle = computed(() => {
+  if (!showManagementRecords.value) return '我的教案'
+  return isAdmin.value ? '教案总览' : '教研教案总览'
+})
+const recordsDescription = computed(() => {
+  if (!showManagementRecords.value) return '查看、导出并复用自己保存的教案。'
+  if (isTeachingManager.value) return '按教师筛选教案，可用于教研检查和后续协作。'
+  return '按教师筛选查看教案归属、合规风险和版本记录。'
+})
+const lessonOwnerOptions = computed(() => {
+  const owners = new Map<number, string>()
+  for (const lesson of lessons.value) {
+    owners.set(lesson.owner_id, lesson.owner_name || lesson.owner_username || `用户 ${lesson.owner_id}`)
+  }
+  return [...owners.entries()].map(([id, name]) => ({ id, name }))
+})
+const visibleLessons = computed(() => {
+  if (!showManagementRecords.value || ownerFilter.value === 'all') return lessons.value
+  const ownerId = Number(ownerFilter.value)
+  return lessons.value.filter((lesson) => lesson.owner_id === ownerId)
+})
 const selectedChapter = computed(() =>
   selectedCourse.value?.chapters.find((chapter) => chapter.id === form.chapter_id) ?? null,
 )
@@ -215,6 +262,48 @@ function setError(err: unknown, fallback: string) {
   notice.value = ''
 }
 
+function currentDraft(status: GenerationDraft<Record<string, unknown>>['status']) {
+  return {
+    form: { ...form },
+    content: content.value,
+    selectedMaterialIds: [...selectedMaterialIds.value],
+    generatedContent: generatedContent.value,
+    compliance: compliance.value,
+    review: review.value,
+    references: references.value,
+    status,
+  }
+}
+
+function persistDraft(status: GenerationDraft<Record<string, unknown>>['status'] = 'editing') {
+  if (!canCreateLessons.value || !auth.user) return
+  saveGenerationDraft(draftStorageKey('lesson', auth.user.id), currentDraft(status))
+  draftAvailable.value = true
+}
+
+async function restoreDraft() {
+  if (!canCreateLessons.value || !auth.user) return
+  const draft = loadGenerationDraft<Record<string, unknown>>(draftStorageKey('lesson', auth.user.id))
+  if (!draft) return
+  Object.assign(form, draft.form)
+  content.value = draft.content || ''
+  selectedMaterialIds.value = draft.selectedMaterialIds || []
+  generatedContent.value = draft.generatedContent || ''
+  compliance.value = draft.compliance as Compliance | null
+  review.value = draft.review as AIReview | null
+  references.value = (draft.references || []) as LessonGenerateResponse['references']
+  draftAvailable.value = true
+  if (form.course_id) await loadCourseDetail(form.course_id)
+  setMessage(draft.status === 'generating' ? '已恢复生成中的未保存教案草稿。' : '已恢复未保存教案草稿。')
+}
+
+function discardDraft() {
+  if (!auth.user) return
+  clearGenerationDraft(draftStorageKey('lesson', auth.user.id))
+  draftAvailable.value = false
+  setMessage('未保存草稿已清除。')
+}
+
 function fillFromLesson(lesson: LessonRead, clearDependentState = false) {
   if (clearDependentState) {
     clearSelectionDependentState(dependentState, lesson.current_content)
@@ -237,6 +326,27 @@ function fillFromLesson(lesson: LessonRead, clearDependentState = false) {
   form.prompt_template = lesson.prompt_template
   form.output_format = lesson.output_format
   content.value = lesson.current_content
+}
+
+function canReuseLesson(lesson: LessonRead): boolean {
+  if (!canCreateLessons.value) return false
+  return lesson.owner_id === auth.user?.id || isTeachingManager.value
+}
+
+function reuseLessonLabel(lesson: LessonRead): string {
+  return lesson.owner_id === auth.user?.id ? '继续编辑' : '复用生成'
+}
+
+async function reuseLesson(lesson: LessonRead) {
+  fillFromLesson(lesson, true)
+  if (lesson.owner_id !== auth.user?.id) {
+    selectedLessonId.value = null
+    form.title = `${lesson.title}（副本）`
+  }
+  if (form.course_id) await loadCourseDetail(form.course_id)
+  await router.push('/dashboard/lesson/generate')
+  persistDraft('editing')
+  setMessage(lesson.owner_id === auth.user?.id ? '已载入自己的教案，可继续编辑后保存。' : '已载入该教案内容，可基于它生成新的教案。')
 }
 
 async function loadCourses() {
@@ -290,6 +400,7 @@ async function loadLessons() {
 async function generateLesson() {
   loading.value = 'generate'
   setMessage()
+  persistDraft('generating')
   try {
     const result = await api<LessonGenerateResponse>('/api/lessons/generate', {
       method: 'POST',
@@ -306,6 +417,8 @@ async function generateLesson() {
         teaching_goal: form.teaching_goal,
         use_materials: form.use_materials,
         material_ids: materialIds(),
+        reference_count: form.reference_count,
+        retrieval_focus: form.retrieval_focus,
         prompt_template: form.prompt_template,
         output_format: form.output_format,
       }),
@@ -315,6 +428,7 @@ async function generateLesson() {
     review.value = result.review
     references.value = result.references
     generatedContent.value = result.content
+    persistDraft('generated')
     setMessage('备课内容已生成，可继续编辑后保存。')
   } catch (err) {
     setError(err, '备课生成失败')
@@ -327,6 +441,7 @@ function adoptRevisedContent() {
   if (!revisedPreviewContent.value) return
   content.value = revisedPreviewContent.value
   generatedContent.value = revisedPreviewContent.value
+  persistDraft('generated')
   setMessage('已采用 AI 修订稿，可继续编辑后保存。')
 }
 
@@ -355,6 +470,10 @@ async function saveLesson() {
       }),
     })
     fillFromLesson(saved, true)
+    if (auth.user) {
+      clearGenerationDraft(draftStorageKey('lesson', auth.user.id))
+      draftAvailable.value = false
+    }
     await loadLessons()
     setMessage('备课已保存。')
   } catch (err) {
@@ -424,16 +543,25 @@ async function exportLesson(lessonId = selectedLessonId.value) {
 onMounted(async () => {
   await Promise.all([loadLessons(), loadCourses(), loadMaterials()])
   await applyRouteContext()
+  await restoreDraft()
 })
+
+onBeforeUnmount(() => {
+  persistDraft(loading.value === 'generate' ? 'generating' : 'editing')
+})
+
+watch([form, content, selectedMaterialIds], () => {
+  persistDraft(loading.value === 'generate' ? 'generating' : 'editing')
+}, { deep: true })
 </script>
 
 <template>
   <section class="page-shell">
     <header class="page-hero">
       <div>
-        <p class="eyebrow">备课</p>
-        <h1>新建备课</h1>
-        <p>填写教学目标，生成可编辑教案，并保存为可追溯的版本记录。</p>
+        <p class="eyebrow">教案</p>
+        <h1>{{ pageMode === 'records' ? recordsTitle : '生成教案' }}</h1>
+        <p>{{ pageMode === 'records' ? recordsDescription : '填写教学目标，生成可编辑教案，并保存为可追溯的版本记录。' }}</p>
       </div>
       <button v-if="canExportLessons" type="button" class="btn-secondary" :disabled="!selectedLessonId || loading === 'export'" @click="exportLesson()">
         {{ loading === 'export' ? '导出中...' : '导出 DOCX' }}
@@ -442,8 +570,12 @@ onMounted(async () => {
 
     <p v-if="error" class="alert" role="alert">{{ error }}</p>
     <p v-if="notice" class="notice">{{ notice }}</p>
+    <p v-if="draftAvailable && canCreateLessons" class="draft-banner">
+      当前页面有未保存草稿，切换页面后会自动保留。
+      <button type="button" class="btn-secondary" @click="discardDraft">清除草稿</button>
+    </p>
 
-    <div v-if="canCreateLessons" class="editor-grid">
+    <div v-if="showGenerator" class="editor-grid">
       <form class="panel form-grid" @submit.prevent="generateLesson">
         <label>
           课程
@@ -520,9 +652,23 @@ onMounted(async () => {
             :context-ids="contextIds"
             :disabled="!form.use_materials"
           />
+          <div class="retrieval-grid">
+            <label>
+              参考资料数量
+              <input v-model.number="form.reference_count" type="number" min="1" max="20" />
+            </label>
+            <label>
+              检索侧重点
+              <select v-model="form.retrieval_focus">
+                <option value="precise">更精准</option>
+                <option value="balanced">均衡</option>
+                <option value="broad">更宽泛</option>
+              </select>
+            </label>
+          </div>
           <RouterLink
             class="inline-action"
-            :to="{ path: '/dashboard/materials', query: { ...buildTeachingContextQuery(contextIds), return_to: '/dashboard/lesson' } }"
+            :to="{ path: '/dashboard/materials/upload', query: { ...buildTeachingContextQuery(contextIds), return_to: '/dashboard/lesson/generate' } }"
           >
             上传当前课程资料
           </RouterLink>
@@ -541,10 +687,17 @@ onMounted(async () => {
       </form>
 
       <section class="panel stack">
-        <label>
-          生成内容
-          <textarea v-model="content" rows="18" placeholder="生成或粘贴备课内容后保存。" />
-        </label>
+        <div class="content-grid">
+          <label>
+            可编辑内容
+            <textarea v-model="content" rows="18" placeholder="生成或粘贴备课内容后保存。" />
+          </label>
+          <div class="preview-pane">
+            <strong>阅读预览</strong>
+            <p v-if="!content" class="empty-state">生成内容后会在这里按标题、列表和表格排版展示。</p>
+            <MarkdownPreview v-else :content="content" />
+          </div>
+        </div>
         <label>
           版本说明
           <input v-model.trim="form.change_note" />
@@ -579,7 +732,7 @@ onMounted(async () => {
             <strong>AI 修订稿</strong>
             <button type="button" class="btn-secondary" @click="adoptRevisedContent">采用修订稿</button>
           </div>
-          <pre>{{ revisedPreviewContent }}</pre>
+          <MarkdownPreview :content="revisedPreviewContent" />
         </div>
 
         <div v-if="references.length" class="result-card">
@@ -591,21 +744,40 @@ onMounted(async () => {
       </section>
     </div>
 
-    <section class="panel stack">
-      <h2>已保存备课</h2>
-      <p v-if="!lessons.length" class="empty-state">暂无备课记录。</p>
+    <section v-if="showRecords" class="panel stack">
+      <div class="panel-title">
+        <div>
+          <h2>{{ recordsTitle }}</h2>
+          <small>{{ showManagementRecords ? '全局记录会标注所属教师，管理员默认只查看和运维。' : '只显示当前账号创建的教案。' }}</small>
+        </div>
+        <label v-if="showManagementRecords && lessonOwnerOptions.length" class="compact-filter">
+          所属教师
+          <select v-model="ownerFilter">
+            <option value="all">全部教师</option>
+            <option v-for="owner in lessonOwnerOptions" :key="owner.id" :value="String(owner.id)">
+              {{ owner.name }}
+            </option>
+          </select>
+        </label>
+      </div>
+      <p v-if="!visibleLessons.length" class="empty-state">暂无备课记录。</p>
       <ul v-else class="item-list">
-        <li v-for="lesson in lessons" :key="lesson.id" :class="{ active: lesson.id === selectedLessonId }">
+        <li v-for="lesson in visibleLessons" :key="lesson.id" :class="{ active: lesson.id === selectedLessonId }">
           <div class="stack">
             <strong>{{ lesson.title }}</strong>
             <small>
               {{ lesson.subject }} · {{ lesson.chapter }}
-              · 所属教师 {{ lesson.owner_name || lesson.owner_username || `用户 ${lesson.owner_id}` }}
+              <template v-if="showManagementRecords">
+                · 所属教师 {{ lesson.owner_name || lesson.owner_username || `用户 ${lesson.owner_id}` }}
+              </template>
               <span class="status-pill" :class="lesson.compliance_level">{{ riskLabel(lesson.compliance_level) }}</span>
               {{ formatDate(lesson.updated_at) }}
             </small>
           </div>
           <div class="actions">
+            <button v-if="canReuseLesson(lesson)" type="button" class="btn-secondary" @click="reuseLesson(lesson)">
+              {{ reuseLessonLabel(lesson) }}
+            </button>
             <button type="button" class="btn-secondary" @click="loadVersions(lesson)">版本</button>
             <button v-if="canExportLessons" type="button" class="btn-secondary" @click="exportLesson(lesson.id)">导出</button>
           </div>
@@ -619,7 +791,7 @@ onMounted(async () => {
         <li v-for="version in versions" :key="version.id">
           <strong>版本 {{ version.version_no }}</strong>
           <small>{{ version.change_note || '无说明' }} · {{ formatDate(version.created_at) }}</small>
-          <p>{{ version.content }}</p>
+          <MarkdownPreview :content="version.content" />
         </li>
       </ul>
     </section>
@@ -632,6 +804,32 @@ onMounted(async () => {
   grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
+  gap: 14px;
+}
+
+.preview-pane {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 100%;
+  max-height: 680px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.retrieval-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .result-card {
@@ -667,15 +865,6 @@ onMounted(async () => {
   justify-content: space-between;
 }
 
-.revision-card pre {
-  max-height: 260px;
-  margin: 0;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-family: inherit;
-  line-height: 1.55;
-}
-
 .item-list {
   display: grid;
   gap: 12px;
@@ -698,8 +887,19 @@ onMounted(async () => {
   background: #eff6ff;
 }
 
+.compact-filter {
+  max-width: 220px;
+}
+
+@media (max-width: 1180px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 940px) {
   .editor-grid,
+  .retrieval-grid,
   .item-list li {
     display: grid;
     grid-template-columns: 1fr;

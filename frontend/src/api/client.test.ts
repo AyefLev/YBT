@@ -5,8 +5,10 @@ import { ApiError, TOKEN_KEY, api, apiBlob, apiForm, downloadBlobResponse } from
 describe('api client', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.stubGlobal('localStorage', createLocalStorage())
+    vi.stubGlobal('localStorage', createStorage())
+    vi.stubGlobal('sessionStorage', createStorage())
     localStorage.clear()
+    sessionStorage.clear()
   })
 
   test('returns undefined for successful empty JSON responses', async () => {
@@ -43,7 +45,7 @@ describe('api client', () => {
   })
 
   test('apiForm sends multipart bodies with auth and without JSON content type', async () => {
-    localStorage.setItem(TOKEN_KEY, 'valid-token')
+    sessionStorage.setItem(TOKEN_KEY, 'valid-token')
     const form = new FormData()
     form.set('title', '教材')
 
@@ -66,7 +68,7 @@ describe('api client', () => {
   })
 
   test('apiBlob returns attachment blob and filename from content disposition', async () => {
-    localStorage.setItem(TOKEN_KEY, 'valid-token')
+    sessionStorage.setItem(TOKEN_KEY, 'valid-token')
     const fetchMock = vi.fn().mockResolvedValue(
       new Response('docx-bytes', {
         status: 200,
@@ -113,7 +115,7 @@ describe('api client', () => {
   })
 })
 
-function createLocalStorage(): Storage {
+function createStorage(): Storage {
   const store = new Map<string, string>()
   return {
     get length() {

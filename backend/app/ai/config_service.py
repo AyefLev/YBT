@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.ai.config_schemas import AIProviderConfigRead, AIProviderConfigUpdate
 from app.ai.models import AIProviderConfig
 
-CONFIG_ROLES = ("generate", "review", "revise", "vision")
+CONFIG_ROLES = ("generate", "review", "revise", "vision", "embedding")
 
 
 def list_ai_provider_configs(db: Session) -> list[AIProviderConfigRead]:
@@ -35,6 +35,12 @@ def upsert_ai_provider_config(
         config.base_url = updates["base_url"].strip()
     if "model" in updates and updates["model"] is not None:
         config.model = updates["model"].strip()
+    if "prompt_price_per_1k" in updates and updates["prompt_price_per_1k"] is not None:
+        config.prompt_price_per_1k = float(updates["prompt_price_per_1k"])
+    if "completion_price_per_1k" in updates and updates["completion_price_per_1k"] is not None:
+        config.completion_price_per_1k = float(updates["completion_price_per_1k"])
+    if "currency" in updates and updates["currency"] is not None:
+        config.currency = updates["currency"].strip().upper() or "CNY"
     if "enabled" in updates and updates["enabled"] is not None:
         config.enabled = bool(updates["enabled"])
     if payload.clear_api_key:
@@ -60,6 +66,9 @@ def ai_provider_config_to_read(
         role=config.role if config else _normalize_role(role or "generate"),
         base_url=config.base_url if config else "",
         model=config.model if config else "",
+        prompt_price_per_1k=config.prompt_price_per_1k if config else 0.0,
+        completion_price_per_1k=config.completion_price_per_1k if config else 0.0,
+        currency=config.currency if config else "CNY",
         enabled=config.enabled if config else False,
         api_key_configured=bool(api_key),
         api_key_preview=_preview_api_key(api_key),

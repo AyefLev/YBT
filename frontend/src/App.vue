@@ -256,6 +256,19 @@ button:disabled,
   line-height: 1.6;
 }
 
+.draft-banner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #9a3412;
+  background: #fff7ed;
+  line-height: 1.6;
+}
+
 .alert {
   border: 1px solid #fecaca;
   color: #b42318;

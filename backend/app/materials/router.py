@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.models import User
 from app.core.database import get_db
-from app.core.deps import require_permission
+from app.core.deps import require_any_permission, require_permission
 from app.materials.models import Material, MaterialChunk
 from app.materials.schemas import MaterialChunkRead, MaterialParseStatusRead, MaterialRead
 from app.materials.service import (
@@ -35,6 +35,9 @@ def material_to_read(material: Material) -> MaterialRead:
         chapter_id=material.chapter_id,
         session_id=material.session_id,
         knowledge_point_id=material.knowledge_point_id,
+        chunk_strategy=material.chunk_strategy,
+        chunk_size=material.chunk_size,
+        chunk_overlap=material.chunk_overlap,
         tags=material_tags(material),
         file_name=material.file_name,
         file_type=material.file_type,
@@ -75,7 +78,7 @@ def _manageable_material_or_404(db: Session, material_id: int, current_user: Use
 
 @router.get("", response_model=list[MaterialRead])
 def list_materials(
-    current_user: User = Depends(require_permission("material:upload")),
+    current_user: User = Depends(require_any_permission("material:upload", "material:view_all", "material:view_public")),
     db: Session = Depends(get_db),
 ) -> list[MaterialRead]:
     return [
@@ -94,6 +97,9 @@ def upload_material(
     chapter_id: int | None = Form(None),
     session_id: int | None = Form(None),
     knowledge_point_id: int | None = Form(None),
+    chunk_strategy: str = Form("fixed"),
+    chunk_size: int = Form(800),
+    chunk_overlap: int = Form(80),
     tags: str = Form(""),
     file: UploadFile = File(...),
     current_user: User = Depends(require_permission("material:upload")),
@@ -114,6 +120,9 @@ def upload_material(
         chapter_id=chapter_id,
         session_id=session_id,
         knowledge_point_id=knowledge_point_id,
+        chunk_strategy=chunk_strategy,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
         tags=tags,
         upload=file,
         uploader=current_user,
@@ -127,7 +136,7 @@ def upload_material(
 @router.get("/{material_id}", response_model=MaterialRead)
 def get_material(
     material_id: int,
-    current_user: User = Depends(require_permission("material:upload")),
+    current_user: User = Depends(require_any_permission("material:upload", "material:view_all", "material:view_public")),
     db: Session = Depends(get_db),
 ) -> MaterialRead:
     material = _material_or_404(db, material_id, current_user)
@@ -137,7 +146,7 @@ def get_material(
 @router.get("/{material_id}/parse-status", response_model=MaterialParseStatusRead)
 def get_material_parse_status(
     material_id: int,
-    current_user: User = Depends(require_permission("material:upload")),
+    current_user: User = Depends(require_any_permission("material:upload", "material:view_all", "material:view_public")),
     db: Session = Depends(get_db),
 ) -> MaterialParseStatusRead:
     material = _material_or_404(db, material_id, current_user)
@@ -147,7 +156,7 @@ def get_material_parse_status(
 @router.get("/{material_id}/chunks", response_model=list[MaterialChunkRead])
 def get_material_chunks(
     material_id: int,
-    current_user: User = Depends(require_permission("material:upload")),
+    current_user: User = Depends(require_any_permission("material:upload", "material:view_all", "material:view_public")),
     db: Session = Depends(get_db),
 ) -> list[MaterialChunkRead]:
     material = _material_or_404(db, material_id, current_user)

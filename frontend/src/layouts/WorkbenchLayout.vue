@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
 const router = useRouter()
+const route = useRoute()
 const SIDEBAR_COLLAPSED_KEY = 'workbench-sidebar-collapsed'
 const sidebarCollapsed = ref(
   typeof localStorage !== 'undefined' && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true',
 )
+const collapsedGroups = ref<Set<string>>(new Set())
 
-const userName = computed(() => auth.user?.display_name || auth.user?.username || '教师')
+const userName = computed(() => auth.user?.display_name || auth.user?.username || '用户')
 
 const userRoleText = computed(() => {
   if (auth.user?.roles.includes('admin')) return '管理员'
@@ -29,26 +31,85 @@ function hasAnyPermission(...permissions: string[]): boolean {
   return permissions.some((permission) => hasPermission(permission))
 }
 
-const navItems = computed(() =>
+interface NavChild {
+  label: string
+  to: string
+  show: boolean
+}
+
+interface NavGroup {
+  label: string
+  to?: string
+  show: boolean
+  children?: NavChild[]
+}
+
+const navGroups = computed<NavGroup[]>(() =>
   [
     { label: '工作台', to: '/dashboard', show: true },
-    { label: '备课资源', to: '/dashboard/lesson', show: hasAnyPermission('lesson:create', 'lesson:view_all') },
-    { label: '习题资源', to: '/dashboard/exercise', show: hasAnyPermission('exercise:create', 'exercise:view_all') },
-    { label: '机构知识库', to: '/dashboard/materials', show: hasAnyPermission('material:upload', 'material:view_all') },
-    { label: '课程体系', to: '/dashboard/courses', show: hasAnyPermission('course:create', 'course:view_all') },
     {
-      label: '班级与作业',
-      to: '/dashboard/classrooms',
-      show: hasAnyPermission('class:manage', 'class:join', 'class:view_all'),
+      label: '教案',
+      show: hasAnyPermission('lesson:create', 'lesson:view_all'),
+      children: [
+        { label: '生成教案', to: '/dashboard/lesson/generate', show: hasPermission('lesson:create') },
+        { label: '已有教案', to: '/dashboard/lesson/records', show: hasAnyPermission('lesson:create', 'lesson:view_all') },
+      ],
     },
-    { label: '题库管理', to: '/dashboard/questions', show: hasAnyPermission('exercise:create', 'question:view_all') },
-    { label: '教研审核', to: '/dashboard/reviews', show: hasPermission('review:manage') },
-    { label: '合规检查', to: '/dashboard/compliance', show: hasPermission('lesson:create') },
-    { label: '观测日志', to: '/dashboard/observability', show: hasPermission('log:view') },
-    { label: '演示检查', to: '/dashboard/health', show: true },
-    { label: '资源库', to: '/dashboard/resources', show: true },
-    { label: '系统管理', to: '/dashboard/admin', show: hasPermission('admin:user_manage') },
-  ].filter((item) => item.show),
+    {
+      label: '练习题',
+      show: hasAnyPermission('exercise:create', 'exercise:view_all'),
+      children: [
+        { label: '生成练习', to: '/dashboard/exercise/generate', show: hasPermission('exercise:create') },
+        { label: '已有练习', to: '/dashboard/exercise/records', show: hasAnyPermission('exercise:create', 'exercise:view_all') },
+        { label: '题库管理', to: '/dashboard/questions', show: hasAnyPermission('exercise:create', 'question:view_all') },
+      ],
+    },
+    {
+      label: '资料课程',
+      show: hasAnyPermission('material:upload', 'material:view_all', 'material:view_public', 'course:create', 'course:view_all'),
+      children: [
+        { label: '资料列表', to: '/dashboard/materials/library', show: hasAnyPermission('material:upload', 'material:view_all', 'material:view_public') },
+        { label: '上传资料', to: '/dashboard/materials/upload', show: hasPermission('material:upload') },
+        { label: '课程体系', to: '/dashboard/courses', show: hasAnyPermission('course:create', 'course:view_all') },
+      ],
+    },
+    {
+      label: '班级教学',
+      show: hasAnyPermission('class:manage', 'class:join', 'class:view_all'),
+      children: [
+        { label: '班级与作业', to: '/dashboard/classrooms', show: hasAnyPermission('class:manage', 'class:join', 'class:view_all') },
+      ],
+    },
+    {
+      label: '审核运维',
+      show: hasAnyPermission('review:manage', 'lesson:create', 'log:view'),
+      children: [
+        { label: '教研审核', to: '/dashboard/reviews', show: hasPermission('review:manage') },
+        { label: '内容检查', to: '/dashboard/compliance', show: hasPermission('lesson:create') },
+        { label: '运行总览', to: '/dashboard/observability', show: hasPermission('log:view') },
+        { label: 'Token 与费用', to: '/dashboard/observability/token', show: hasPermission('log:view') },
+        { label: '系统检查', to: '/dashboard/health', show: hasPermission('log:view') },
+      ],
+    },
+    {
+      label: '系统管理',
+      show: hasAnyPermission('admin:user_manage', 'admin:content_manage'),
+      children: [
+        { label: '用户管理', to: '/dashboard/admin/users', show: hasPermission('admin:user_manage') },
+        { label: 'API 管理', to: '/dashboard/admin/api', show: hasPermission('admin:content_manage') },
+      ],
+    },
+    {
+      label: '资源库',
+      to: '/dashboard/resources',
+      show: hasAnyPermission('lesson:create', 'exercise:create', 'material:upload', 'material:view_public', 'course:create', 'question:view_all'),
+    },
+  ]
+    .map((group) => ({
+      ...group,
+      children: group.children?.filter((child) => child.show),
+    }))
+    .filter((group) => group.show && (!group.children || group.children.length)),
 )
 
 async function logout() {
@@ -61,6 +122,27 @@ function toggleSidebar() {
   if (typeof localStorage !== 'undefined') {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value))
   }
+}
+
+function isGroupOpen(group: NavGroup): boolean {
+  if (!group.children?.length) return false
+  if (collapsedGroups.value.has(group.label)) return false
+  return true
+}
+
+function toggleGroup(group: NavGroup) {
+  const next = new Set(collapsedGroups.value)
+  if (next.has(group.label)) {
+    next.delete(group.label)
+  } else {
+    next.add(group.label)
+  }
+  collapsedGroups.value = next
+}
+
+function groupActive(group: NavGroup): boolean {
+  if (group.to && route.path === group.to) return true
+  return group.children?.some((child) => route.path === child.to || route.path.startsWith(`${child.to}/`)) ?? false
 }
 </script>
 
@@ -79,16 +161,41 @@ function toggleSidebar() {
       </div>
 
       <nav aria-label="工作台导航">
-        <span class="nav-group">教师流程</span>
-        <RouterLink
-          v-for="item in navItems"
-          :key="item.to"
-          :to="item.to"
-          :class="{ exact: item.to === '/dashboard' }"
-        >
-          <span class="nav-full">{{ item.label }}</span>
-          <span class="nav-short">{{ item.label.slice(0, 2) }}</span>
-        </RouterLink>
+        <template v-for="group in navGroups" :key="group.label">
+          <RouterLink
+            v-if="group.to"
+            :to="group.to"
+            class="nav-link"
+            :class="{ active: route.path === group.to }"
+          >
+            <span class="nav-full">{{ group.label }}</span>
+            <span class="nav-short">{{ group.label.slice(0, 2) }}</span>
+          </RouterLink>
+          <div v-else class="nav-section">
+            <button
+              type="button"
+              class="nav-parent"
+              :class="{ active: groupActive(group) }"
+              @click="toggleGroup(group)"
+            >
+              <span class="nav-full">{{ group.label }}</span>
+              <span class="nav-short">{{ group.label.slice(0, 2) }}</span>
+              <span class="nav-arrow">{{ isGroupOpen(group) ? '⌄' : '›' }}</span>
+            </button>
+            <div v-if="isGroupOpen(group)" class="nav-children">
+              <RouterLink
+                v-for="child in group.children"
+                :key="child.to"
+                :to="child.to"
+                class="nav-child"
+              >
+                <span class="nav-dot" aria-hidden="true" />
+                <span class="nav-full">{{ child.label }}</span>
+                <span class="nav-short">{{ child.label.slice(0, 2) }}</span>
+              </RouterLink>
+            </div>
+          </div>
+        </template>
       </nav>
 
       <div class="account">
@@ -171,8 +278,7 @@ function toggleSidebar() {
 }
 
 .brand span:last-child,
-.account span,
-.nav-group {
+.account span {
   color: var(--muted);
   font-size: 0.86rem;
 }
@@ -182,29 +288,70 @@ nav {
   gap: 6px;
 }
 
-.nav-group {
-  margin: 4px 0 6px;
-  font-weight: 800;
+.nav-section {
+  display: grid;
+  gap: 4px;
 }
 
-nav a {
+.nav-link,
+.nav-parent,
+.nav-child {
+  display: flex;
+  width: 100%;
+  gap: 10px;
+  align-items: center;
   border-radius: 8px;
   padding: 10px 12px;
   color: #334155;
+  background: transparent;
   font-weight: 800;
   text-decoration: none;
+}
+
+.nav-parent {
+  border: 0;
+  text-align: left;
 }
 
 .nav-short {
   display: none;
 }
 
-nav a:hover {
+.nav-arrow {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.nav-children {
+  display: grid;
+  gap: 3px;
+  padding-left: 12px;
+}
+
+.nav-child {
+  padding: 8px 10px;
+  color: #475569;
+  font-size: 0.94rem;
+}
+
+.nav-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 999px;
+  background: #94a3b8;
+}
+
+.nav-link:hover,
+.nav-parent:hover,
+.nav-child:hover {
   background: #f1f5f9;
 }
 
-nav a.router-link-active,
-nav a.exact.router-link-exact-active {
+.nav-parent.active,
+.nav-link.active,
+.nav-child.router-link-active,
+.nav-link.exact.router-link-exact-active {
   color: var(--brand-dark);
   background: var(--brand-soft);
 }
@@ -249,7 +396,8 @@ nav a.exact.router-link-exact-active {
 .workbench.collapsed .account strong,
 .workbench.collapsed .account small,
 .workbench.collapsed .nav-full,
-.workbench.collapsed .nav-group {
+.workbench.collapsed .nav-arrow,
+.workbench.collapsed .nav-dot {
   display: none;
 }
 
@@ -257,9 +405,12 @@ nav a.exact.router-link-exact-active {
   display: inline;
 }
 
-.workbench.collapsed nav a,
+.workbench.collapsed .nav-link,
+.workbench.collapsed .nav-parent,
+.workbench.collapsed .nav-child,
 .workbench.collapsed .account button,
 .workbench.collapsed .collapse-toggle {
+  justify-content: center;
   text-align: center;
 }
 
@@ -283,11 +434,9 @@ nav a.exact.router-link-exact-active {
     flex-wrap: wrap;
   }
 
-  .nav-group {
-    width: 100%;
-  }
-
-  nav a {
+  .nav-link,
+  .nav-parent,
+  .nav-child {
     padding: 8px 10px;
   }
 
@@ -316,7 +465,8 @@ nav a.exact.router-link-exact-active {
 
   .workbench.collapsed .brand div,
   .workbench.collapsed .nav-full,
-  .workbench.collapsed .nav-group {
+  .workbench.collapsed .nav-arrow,
+  .workbench.collapsed .nav-dot {
     display: initial;
   }
 

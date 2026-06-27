@@ -20,6 +20,8 @@ class ExerciseGenerateRequest(BaseModel):
     count: int = Field(gt=0)
     use_materials: bool = False
     material_ids: list[int] = Field(default_factory=list)
+    reference_count: int = Field(default=5, ge=1, le=20)
+    retrieval_focus: str = "balanced"
     prompt_template: str = ""
     output_format: str = ""
     multi_agent_review: bool | None = None

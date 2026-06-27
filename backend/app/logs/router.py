@@ -12,12 +12,14 @@ from app.logs.schemas import (
     HealthComponentRead,
     JobLogRead,
     LogSummaryRead,
+    ModelUsageRead,
     ModelHealthRead,
     ModelLogRead,
     ObservabilityHealthRead,
     OperationLogRead,
     RecentErrorRead,
     SystemHealthRead,
+    TokenUsageRead,
 )
 from app.retrieval.vector_store import check_vector_store_health
 
@@ -139,6 +141,17 @@ def _model_health() -> ModelHealthRead:
     )
 
 
+def _currency_label(db: Session, statement) -> str:
+    currencies = [
+        item
+        for item in db.scalars(statement).all()
+        if item
+    ]
+    if not currencies:
+        return "CNY"
+    return currencies[0] if len(set(currencies)) == 1 else "mixed"
+
+
 @router.get("/summary", response_model=LogSummaryRead)
 def get_log_summary(
     current_user: User = Depends(require_permission("log:view")),
@@ -149,6 +162,10 @@ def get_log_summary(
     model_success = db.scalar(select(func.count(ModelLog.id)).where(ModelLog.success.is_(True))) or 0
     model_failed = db.scalar(select(func.count(ModelLog.id)).where(ModelLog.success.is_(False))) or 0
     mock_fallbacks = db.scalar(select(func.count(ModelLog.id)).where(ModelLog.fallback_used.is_(True))) or 0
+    prompt_tokens = db.scalar(select(func.coalesce(func.sum(ModelLog.prompt_tokens), 0))) or 0
+    completion_tokens = db.scalar(select(func.coalesce(func.sum(ModelLog.completion_tokens), 0))) or 0
+    estimated_cost = db.scalar(select(func.coalesce(func.sum(ModelLog.estimated_cost), 0))) or 0
+    cost_currency = _currency_label(db, select(ModelLog.cost_currency).distinct())
     average_latency = db.scalar(select(func.avg(ModelLog.latency_ms)).where(ModelLog.latency_ms.is_not(None))) or 0
     job_total = db.scalar(select(func.count(JobLog.id))) or 0
     job_failed = db.scalar(select(func.count(JobLog.id)).where(JobLog.status == "failed")) or 0
@@ -190,12 +207,101 @@ def get_log_summary(
         model_success=model_success,
         model_failed=model_failed,
         mock_fallbacks=mock_fallbacks,
+        prompt_tokens=int(prompt_tokens),
+        completion_tokens=int(completion_tokens),
+        total_tokens=int(prompt_tokens) + int(completion_tokens),
+        estimated_cost=round(float(estimated_cost or 0), 6),
+        cost_currency=cost_currency,
         average_latency_ms=int(average_latency),
         job_total=job_total,
         job_failed=job_failed,
         operation_total=operation_total,
         recent_errors=recent_errors[:5],
     )
+
+
+@router.get("/token-usage", response_model=list[TokenUsageRead])
+def list_token_usage(
+    current_user: User = Depends(require_permission("log:view")),
+    db: Session = Depends(get_db),
+) -> list[TokenUsageRead]:
+    _ = current_user
+    prompt_sum = func.coalesce(func.sum(ModelLog.prompt_tokens), 0)
+    completion_sum = func.coalesce(func.sum(ModelLog.completion_tokens), 0)
+    cost_sum = func.coalesce(func.sum(ModelLog.estimated_cost), 0)
+    currency_count = func.count(func.distinct(ModelLog.cost_currency))
+    currency_value = func.min(ModelLog.cost_currency)
+    rows = db.execute(
+        select(
+            ModelLog.user_id,
+            User.username,
+            User.display_name,
+            prompt_sum.label("prompt_tokens"),
+            completion_sum.label("completion_tokens"),
+            cost_sum.label("estimated_cost"),
+            currency_count.label("currency_count"),
+            currency_value.label("cost_currency"),
+            func.count(ModelLog.id).label("call_count"),
+        )
+        .outerjoin(User, User.id == ModelLog.user_id)
+        .group_by(ModelLog.user_id, User.username, User.display_name)
+        .order_by(desc(cost_sum), desc(prompt_sum + completion_sum), desc(func.count(ModelLog.id)))
+        .limit(50)
+    ).all()
+    return [
+        TokenUsageRead(
+            user_id=row.user_id,
+            username=row.username or "",
+            display_name=row.display_name or "",
+            prompt_tokens=int(row.prompt_tokens or 0),
+            completion_tokens=int(row.completion_tokens or 0),
+            total_tokens=int(row.prompt_tokens or 0) + int(row.completion_tokens or 0),
+            estimated_cost=round(float(row.estimated_cost or 0), 6),
+            cost_currency=row.cost_currency if int(row.currency_count or 0) <= 1 else "mixed",
+            call_count=int(row.call_count or 0),
+        )
+        for row in rows
+    ]
+
+
+@router.get("/model-usage", response_model=list[ModelUsageRead])
+def list_model_usage(
+    current_user: User = Depends(require_permission("log:view")),
+    db: Session = Depends(get_db),
+) -> list[ModelUsageRead]:
+    _ = current_user
+    prompt_sum = func.coalesce(func.sum(ModelLog.prompt_tokens), 0)
+    completion_sum = func.coalesce(func.sum(ModelLog.completion_tokens), 0)
+    cost_sum = func.coalesce(func.sum(ModelLog.estimated_cost), 0)
+    rows = db.execute(
+        select(
+            ModelLog.api_role,
+            ModelLog.api_base_url,
+            ModelLog.model,
+            ModelLog.cost_currency,
+            prompt_sum.label("prompt_tokens"),
+            completion_sum.label("completion_tokens"),
+            cost_sum.label("estimated_cost"),
+            func.count(ModelLog.id).label("call_count"),
+        )
+        .group_by(ModelLog.api_role, ModelLog.api_base_url, ModelLog.model, ModelLog.cost_currency)
+        .order_by(desc(cost_sum), desc(prompt_sum + completion_sum), desc(func.count(ModelLog.id)))
+        .limit(50)
+    ).all()
+    return [
+        ModelUsageRead(
+            api_role=row.api_role or "",
+            api_base_url=row.api_base_url or "",
+            model=row.model or "",
+            prompt_tokens=int(row.prompt_tokens or 0),
+            completion_tokens=int(row.completion_tokens or 0),
+            total_tokens=int(row.prompt_tokens or 0) + int(row.completion_tokens or 0),
+            estimated_cost=round(float(row.estimated_cost or 0), 6),
+            cost_currency=row.cost_currency or "CNY",
+            call_count=int(row.call_count or 0),
+        )
+        for row in rows
+    ]
 
 
 @router.get("/health", response_model=SystemHealthRead)

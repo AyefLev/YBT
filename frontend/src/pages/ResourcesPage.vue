@@ -1,38 +1,61 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
-const resources = [
-  {
-    title: '备课资源',
-    description: '从教学目标生成教案，保存版本并导出 DOCX。',
-    to: '/dashboard/lesson',
-  },
-  {
-    title: '习题资源',
-    description: '按知识点生成练习题，保留历史版本用于复用。',
-    to: '/dashboard/exercise',
-  },
-  {
-    title: '机构知识库',
-    description: '上传教材和讲义，检索相关片段辅助生成。',
-    to: '/dashboard/materials',
-  },
-  {
-    title: '合规审核',
-    description: '检查教案、习题和材料中的风险词与修改建议。',
-    to: '/dashboard/compliance',
-  },
-  {
-    title: '课程体系',
-    description: '维护课程、章节、课次与知识点结构。',
-    to: '/dashboard/courses',
-  },
-  {
-    title: '题库管理',
-    description: '沉淀可审核、可导出的机构题库资产。',
-    to: '/dashboard/questions',
-  },
-]
+import { useAuthStore } from '../stores/auth'
+
+const auth = useAuthStore()
+
+function hasPermission(permission: string): boolean {
+  return auth.user?.permissions.includes(permission) ?? false
+}
+
+const resources = computed(() =>
+  [
+    {
+      title: '我的班级',
+      description: '查看已加入班级、作业与提交情况。',
+      to: '/dashboard/classrooms',
+      show: hasPermission('class:join') || hasPermission('class:manage') || hasPermission('class:view_all'),
+    },
+    {
+      title: '公共资料库',
+      description: '查看可公开使用的课程资料和知识库片段。',
+      to: '/dashboard/materials',
+      show: hasPermission('material:view_public') || hasPermission('material:upload') || hasPermission('material:view_all'),
+    },
+    {
+      title: '教案',
+      description: '生成和维护教案，保存版本并导出文档。',
+      to: '/dashboard/lesson',
+      show: hasPermission('lesson:create') || hasPermission('lesson:view_all'),
+    },
+    {
+      title: '练习题',
+      description: '按课程节点生成练习，保存后可进入题库。',
+      to: '/dashboard/exercise',
+      show: hasPermission('exercise:create') || hasPermission('exercise:view_all'),
+    },
+    {
+      title: '课程体系',
+      description: '维护课程、章节、课次与知识点结构。',
+      to: '/dashboard/courses',
+      show: hasPermission('course:create') || hasPermission('course:view_all'),
+    },
+    {
+      title: '题库管理',
+      description: '沉淀可审核、可导出的机构题库资产。',
+      to: '/dashboard/questions',
+      show: hasPermission('exercise:create') || hasPermission('question:view_all'),
+    },
+    {
+      title: '内容检查',
+      description: '检查教案、习题和材料中的风险词与修改建议。',
+      to: '/dashboard/compliance',
+      show: hasPermission('lesson:create'),
+    },
+  ].filter((resource) => resource.show),
+)
 </script>
 
 <template>
@@ -41,7 +64,7 @@ const resources = [
       <div>
         <p class="eyebrow">资源</p>
         <h1>资源库</h1>
-        <p>汇总当前系统可用的教研资源入口，方便演示时快速进入不同业务能力。</p>
+        <p>汇总当前账号可用的资源入口，只显示与你的角色权限匹配的内容。</p>
       </div>
     </header>
 
