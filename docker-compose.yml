@@ -1,0 +1,134 @@
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg://yanbeitong:yanbeitong@postgres:5432/yanbeitong
+  REDIS_URL: redis://redis:6379/0
+  VECTOR_STORE_PROVIDER: qdrant
+  QDRANT_URL: http://qdrant:6333
+  QDRANT_COLLECTION: yanbeitong_material_chunks
+  EMBEDDING_MODEL: local-hash-embedding-v1
+  EMBEDDING_DIMENSIONS: 128
+  TASK_QUEUE_MODE: redis
+  TASK_QUEUE_PREFIX: ybt:tasks
+  TASK_WORKER_QUEUES: materials,exports,presentations
+  TASK_WORKER_POLL_SECONDS: 5
+  MATERIAL_PARSE_WAIT_SECONDS: 0
+  UPLOAD_DIR: /app/data/uploads
+  EXPORT_DIR: /app/data/exports
+
+services:
+  gateway:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infra/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
+    expose:
+      - "5173"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: api
+    expose:
+      - "8000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - ./backend/.env
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: worker
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: yanbeitong
+      POSTGRES_USER: yanbeitong
+      POSTGRES_PASSWORD: yanbeitong
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yanbeitong -d yanbeitong"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:

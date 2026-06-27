@@ -1,0 +1,393 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+
+import { api } from '../api/client'
+
+interface HealthComponent {
+  status: 'healthy' | 'degraded' | 'unhealthy' | string
+  kind: string
+  message: string
+}
+
+interface ModelHealth {
+  text_model: string
+  generate_model: string
+  review_model: string
+  revise_model: string
+  vision_model: string | null
+  api_key_configured: boolean
+  vision_api_key_configured: boolean
+  multi_agent_review: boolean
+  mock_on_failure: boolean
+}
+
+interface ObservabilityHealth {
+  model_total: number
+  model_failed: number
+  job_total: number
+  job_failed: number
+  operation_total: number
+}
+
+interface DemoHealth {
+  docker_ready_items: string[]
+  suggested_next_action: string
+}
+
+interface SystemHealth {
+  overall_status: 'healthy' | 'degraded' | 'unhealthy' | string
+  database: HealthComponent
+  cache: HealthComponent
+  vector_store: HealthComponent
+  models: ModelHealth
+  observability: ObservabilityHealth
+  demo: DemoHealth
+}
+
+interface ModelConnectivityCheck {
+  role: string
+  model: string
+  configured: boolean
+  status: string
+  latency_ms: number | null
+  message: string
+}
+
+interface ModelConnectivity {
+  probe_enabled: boolean
+  checks: ModelConnectivityCheck[]
+}
+
+const health = ref<SystemHealth | null>(null)
+const connectivity = ref<ModelConnectivity | null>(null)
+const loading = ref(false)
+const probing = ref(false)
+const error = ref('')
+const probeError = ref('')
+
+const overallText = computed(() => statusLabel(health.value?.overall_status ?? 'unknown'))
+
+async function loadHealth() {
+  loading.value = true
+  error.value = ''
+  try {
+    const [healthResult, connectivityResult] = await Promise.all([
+      api<SystemHealth>('/api/logs/health'),
+      api<ModelConnectivity>('/api/ai/connectivity'),
+    ])
+    health.value = healthResult
+    connectivity.value = connectivityResult
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '演示检查加载失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function probeModels() {
+  probing.value = true
+  probeError.value = ''
+  try {
+    connectivity.value = await api<ModelConnectivity>('/api/ai/connectivity?probe=true')
+  } catch (err) {
+    probeError.value = err instanceof Error ? err.message : '模型连通性检测失败'
+  } finally {
+    probing.value = false
+  }
+}
+
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    healthy: '正常',
+    degraded: '部分异常',
+    unhealthy: '不可用',
+    unknown: '未知',
+    not_tested: '未检测',
+    not_configured: '未配置',
+    success: '成功',
+    failed: '失败',
+  }
+  return labels[status] ?? status
+}
+
+function statusClass(status: string): string {
+  if (status === 'healthy' || status === 'success') return 'success'
+  if (status === 'degraded' || status === 'not_tested') return 'warning'
+  if (status === 'unhealthy' || status === 'failed' || status === 'not_configured') return 'danger'
+  return ''
+}
+
+function booleanText(value: boolean): string {
+  return value ? '已配置' : '未配置'
+}
+
+function roleLabel(role: string): string {
+  const labels: Record<string, string> = {
+    generate: '生成模型',
+    review: '审核模型',
+    revise: '修订模型',
+    vision: '视觉模型',
+  }
+  return labels[role] ?? role
+}
+
+onMounted(loadHealth)
+</script>
+
+<template>
+  <section class="page-shell">
+    <header class="page-hero">
+      <div>
+        <p class="eyebrow">演示检查</p>
+        <h1>系统健康检查</h1>
+        <p>集中检查后端、数据库、缓存、模型配置和观测日志。点击模型检测按钮时，才会真正请求模型 API。</p>
+      </div>
+      <div class="hero-actions">
+        <button type="button" class="btn-secondary" :disabled="loading" @click="loadHealth">
+          {{ loading ? '检查中...' : '重新检查' }}
+        </button>
+        <button type="button" class="btn-primary" :disabled="probing" @click="probeModels">
+          {{ probing ? '检测中...' : '检测真实模型 API' }}
+        </button>
+      </div>
+    </header>
+
+    <p v-if="error" class="alert" role="alert">{{ error }}</p>
+    <p v-if="probeError" class="alert" role="alert">{{ probeError }}</p>
+    <p v-else-if="loading && !health" class="notice">正在读取系统健康状态...</p>
+
+    <template v-if="health">
+      <section class="metric-grid health-metrics">
+        <article class="metric-card">
+          <span>整体状态</span>
+          <strong>
+            <span class="status-pill" :class="statusClass(health.overall_status)">
+              {{ overallText }}
+            </span>
+          </strong>
+        </article>
+        <article class="metric-card">
+          <span>模型调用</span>
+          <strong>{{ health.observability.model_total }}</strong>
+          <small>失败 {{ health.observability.model_failed }} 次</small>
+        </article>
+        <article class="metric-card">
+          <span>后台任务</span>
+          <strong>{{ health.observability.job_total }}</strong>
+          <small>失败 {{ health.observability.job_failed }} 次</small>
+        </article>
+      </section>
+
+      <div class="two-column-grid">
+        <section class="panel stack">
+          <h2>基础服务</h2>
+          <div class="service-row">
+            <div>
+              <strong>数据库</strong>
+              <small>{{ health.database.kind }}</small>
+            </div>
+            <span class="status-pill" :class="statusClass(health.database.status)">
+              {{ statusLabel(health.database.status) }}
+            </span>
+          </div>
+          <p class="muted">{{ health.database.message }}</p>
+
+          <div class="service-row">
+            <div>
+              <strong>缓存</strong>
+              <small>{{ health.cache.kind }}</small>
+            </div>
+            <span class="status-pill" :class="statusClass(health.cache.status)">
+              {{ statusLabel(health.cache.status) }}
+            </span>
+          </div>
+          <p class="muted">{{ health.cache.message }}</p>
+
+          <div class="service-row">
+            <div>
+              <strong>向量数据库</strong>
+              <small>{{ health.vector_store.kind }}</small>
+            </div>
+            <span class="status-pill" :class="statusClass(health.vector_store.status)">
+              {{ statusLabel(health.vector_store.status) }}
+            </span>
+          </div>
+          <p class="muted">{{ health.vector_store.message }}</p>
+        </section>
+
+        <section class="panel stack">
+          <h2>模型配置</h2>
+          <dl class="kv-list">
+            <div>
+              <dt>主模型</dt>
+              <dd>{{ health.models.text_model }}</dd>
+            </div>
+            <div>
+              <dt>生成 / 审核 / 修订</dt>
+              <dd>
+                {{ health.models.generate_model }} /
+                {{ health.models.review_model }} /
+                {{ health.models.revise_model }}
+              </dd>
+            </div>
+            <div>
+              <dt>文本模型密钥</dt>
+              <dd>{{ booleanText(health.models.api_key_configured) }}</dd>
+            </div>
+            <div>
+              <dt>视觉模型</dt>
+              <dd>{{ health.models.vision_model || '未配置' }}</dd>
+            </div>
+            <div>
+              <dt>多 AI 审核</dt>
+              <dd>{{ health.models.multi_agent_review ? '开启' : '关闭' }}</dd>
+            </div>
+            <div>
+              <dt>Mock 兜底</dt>
+              <dd>{{ health.models.mock_on_failure ? '开启' : '关闭' }}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+
+      <section class="panel stack">
+        <div class="panel-title">
+          <h2>模型连通性</h2>
+          <small>{{ connectivity?.probe_enabled ? '已执行真实请求' : '仅检查配置，未请求模型 API' }}</small>
+        </div>
+        <div v-if="connectivity" class="connectivity-grid">
+          <article v-for="check in connectivity.checks" :key="check.role">
+            <div>
+              <strong>{{ roleLabel(check.role) }}</strong>
+              <small>{{ check.model || '未配置模型' }}</small>
+            </div>
+            <span class="status-pill" :class="statusClass(check.status)">
+              {{ statusLabel(check.status) }}
+            </span>
+            <p>{{ check.message }}</p>
+            <small v-if="check.latency_ms !== null">耗时 {{ check.latency_ms }}ms</small>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <h2>演示准备项</h2>
+        <div class="ready-grid">
+          <span v-for="item in health.demo.docker_ready_items" :key="item" class="ready-item">
+            {{ item }}
+          </span>
+        </div>
+        <p class="notice">{{ health.demo.suggested_next_action }}</p>
+      </section>
+    </template>
+  </section>
+</template>
+
+<style scoped>
+.health-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-card strong {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.service-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.service-row:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.service-row div {
+  display: grid;
+  gap: 4px;
+}
+
+.kv-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.kv-list div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 12px;
+  border-bottom: 1px solid #edf1f7;
+  padding-bottom: 10px;
+}
+
+.kv-list div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.kv-list dt {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.kv-list dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.connectivity-grid,
+.ready-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.connectivity-grid article {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.connectivity-grid p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ready-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.ready-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--brand-dark);
+  background: var(--brand-soft);
+  font-weight: 900;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .health-metrics,
+  .connectivity-grid,
+  .ready-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kv-list div {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
