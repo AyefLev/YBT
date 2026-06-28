@@ -1,3 +1,4 @@
+import base64
 from time import perf_counter
 from typing import Any
 
@@ -166,6 +167,69 @@ def review_generated_content(
     )
 
 
+def analyze_image(
+    db: Session,
+    *,
+    image_bytes: bytes,
+    mime_type: str,
+    prompt: str,
+    user_id: int | None = None,
+) -> AIResult:
+    settings = get_settings()
+    provider_config = _provider_config_for_role(settings, "vision", db=db)
+    selected_model = provider_config.model
+    started = perf_counter()
+
+    try:
+        if not provider_config.api_key or not provider_config.model:
+            raise RuntimeError("VISION_LLM_API_KEY or VISION_LLM_MODEL is not configured")
+
+        response_payload = _call_vision_provider(
+            settings,
+            provider_config,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            prompt=prompt,
+        )
+        content = _extract_content(response_payload)
+        usage = response_payload.get("usage", {})
+        result = AIResult(
+            content=content,
+            provider="real",
+            model=selected_model,
+            fallback_used=False,
+        )
+        _write_model_log(
+            db=db,
+            task_type="vision",
+            result=result,
+            latency_ms=_elapsed_ms(started),
+            success=True,
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            user_id=user_id,
+            provider_config=provider_config,
+        )
+        return result
+    except Exception as exc:
+        _write_model_log(
+            db=db,
+            task_type="vision",
+            result=AIResult(
+                content="",
+                provider="real",
+                model=selected_model,
+                fallback_used=False,
+                error_message=str(exc),
+            ),
+            latency_ms=_elapsed_ms(started),
+            success=False,
+            user_id=user_id,
+            provider_config=provider_config,
+        )
+        raise
+
+
 def check_model_connectivity(
     role: str,
     *,
@@ -175,6 +239,50 @@ def check_model_connectivity(
     settings = get_settings()
     task_type = _role_task_type(role)
     if role == "vision":
+        provider_config = _provider_config_for_role(settings, "vision", db=db)
+        configured = bool(provider_config.api_key and provider_config.model)
+        if not configured:
+            return ModelConnectivityCheck(
+                role=role,
+                model=provider_config.model,
+                configured=False,
+                status="not_configured",
+                message="VISION_LLM_API_KEY or VISION_LLM_MODEL is not configured.",
+            )
+        if not probe:
+            return ModelConnectivityCheck(
+                role=role,
+                model=provider_config.model,
+                configured=True,
+                status="not_tested",
+                message="Vision model is configured; no live request has been sent yet.",
+            )
+        started = perf_counter()
+        try:
+            _call_vision_provider(
+                settings,
+                provider_config,
+                image_bytes=_tiny_png_bytes(),
+                mime_type="image/png",
+                prompt="Reply with ok for vision API connectivity check.",
+            )
+        except Exception as exc:
+            return ModelConnectivityCheck(
+                role=role,
+                model=provider_config.model,
+                configured=True,
+                status="failed",
+                latency_ms=_elapsed_ms(started),
+                message=str(exc),
+            )
+        return ModelConnectivityCheck(
+            role=role,
+            model=provider_config.model,
+            configured=True,
+            status="success",
+            latency_ms=_elapsed_ms(started),
+            message="Vision model API request succeeded.",
+        )
         provider_config = _provider_config_for_role(settings, "vision", db=db)
         configured = bool(provider_config.api_key and provider_config.model)
         return ModelConnectivityCheck(
@@ -262,18 +370,66 @@ def check_model_connectivity(
 
 
 def _call_real_provider(settings: Any, provider_config: ProviderConfig, prompt: str) -> dict[str, Any]:
+    return _call_chat_provider(
+        settings,
+        provider_config,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+
+
+def _call_vision_provider(
+    settings: Any,
+    provider_config: ProviderConfig,
+    *,
+    image_bytes: bytes,
+    mime_type: str,
+    prompt: str,
+) -> dict[str, Any]:
+    encoded_image = base64.b64encode(image_bytes).decode("ascii")
+    media_type = mime_type or "image/png"
+    return _call_chat_provider(
+        settings,
+        provider_config,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt or "Describe this image for teaching use."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{media_type};base64,{encoded_image}"},
+                    },
+                ],
+            }
+        ],
+        temperature=0.2,
+    )
+
+
+def _call_chat_provider(
+    settings: Any,
+    provider_config: ProviderConfig,
+    *,
+    messages: list[dict[str, Any]],
+    temperature: float,
+) -> dict[str, Any]:
     url = f"{provider_config.base_url.rstrip('/')}/chat/completions"
     response = httpx.post(
         url,
         headers={"Authorization": f"Bearer {provider_config.api_key}"},
         json={
             "model": provider_config.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.7,
+            "messages": messages,
+            "temperature": temperature,
         },
         timeout=settings.llm_timeout_seconds,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = response.text[:500]
+        raise RuntimeError(f"{exc}; body={detail}") from exc
     return response.json()
 
 
@@ -413,9 +569,22 @@ def _extract_content(payload: dict[str, Any]) -> str:
 
     message = choices[0].get("message") or {}
     content = message.get("content")
+    if isinstance(content, list):
+        text_parts = [
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        ]
+        content = "\n".join(part for part in text_parts if part)
     if not content:
         raise RuntimeError("LLM response did not include content")
-    return content
+    return str(content)
+
+
+def _tiny_png_bytes() -> bytes:
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAXklEQVR4nO3PMQ0AMAzAsPInvYLYYVWKESTzjhsd8KsBrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BbQHKU9LC7/CP1AAAAABJRU5ErkJggg=="
+    )
 
 
 def _write_model_log(

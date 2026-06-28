@@ -48,3 +48,8 @@ class ModelConnectivityCheck(BaseModel):
 class ModelConnectivityResponse(BaseModel):
     probe_enabled: bool
     checks: list[ModelConnectivityCheck]
+
+
+class VisionAnalysisResponse(BaseModel):
+    content: str
+    provider_status: AIResult

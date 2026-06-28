@@ -1,6 +1,24 @@
 import pytest
 
 
+def _auth_headers(client, username: str = "ai_teacher") -> dict[str, str]:
+    client.post(
+        "/api/auth/register",
+        json={
+            "username": username,
+            "email": f"{username}@example.com",
+            "password": "secret-password",
+            "display_name": "AI Teacher",
+        },
+    )
+    login_response = client.post(
+        "/api/auth/login",
+        json={"username": username, "password": "secret-password"},
+    )
+    token = login_response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_exercise_prompt_constrains_comprehensive_question_format():
     from app.ai.prompts import build_exercise_prompt
 
@@ -194,6 +212,108 @@ def test_ai_connectivity_live_probe_records_success_and_failure(client, monkeypa
     assert calls[0]["url"] == "https://generate.example/v1/chat/completions"
     assert calls[0]["authorization"] == "Bearer generate-key"
     assert calls[0]["model"] == "generate-model"
+
+
+def test_ai_connectivity_live_probe_uses_vision_provider(client, monkeypatch):
+    import httpx
+
+    from app.cache.client import clear_cache_backend
+    from app.core.config import get_settings
+
+    calls: list[dict[str, object]] = []
+
+    def fake_post(url, *, headers, json, timeout):
+        calls.append(
+            {
+                "url": url,
+                "authorization": headers["Authorization"],
+                "model": json["model"],
+                "content": json["messages"][0]["content"],
+            }
+        )
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"choices": [{"message": {"content": "ok"}}]},
+        )
+
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("VISION_LLM_API_KEY", "vision-key")
+    monkeypatch.setenv("VISION_LLM_BASE_URL", "https://vision.example/v1")
+    monkeypatch.setenv("VISION_LLM_MODEL", "vision-model")
+    monkeypatch.setattr(httpx, "post", fake_post)
+    get_settings.cache_clear()
+    clear_cache_backend()
+
+    response = client.get("/api/ai/connectivity?probe=true")
+
+    assert response.status_code == 200
+    body = response.json()
+    checks = {item["role"]: item for item in body["checks"]}
+    assert checks["vision"]["status"] == "success"
+    assert calls[0]["url"] == "https://vision.example/v1/chat/completions"
+    assert calls[0]["authorization"] == "Bearer vision-key"
+    assert calls[0]["model"] == "vision-model"
+    assert calls[0]["content"][0]["type"] == "text"
+    assert calls[0]["content"][1]["type"] == "image_url"
+    assert calls[0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_vision_analysis_endpoint_uses_configured_vision_model(client, monkeypatch):
+    import httpx
+
+    from app.cache.client import clear_cache_backend
+    from app.core.config import get_settings
+    from app.core.database import get_session_local
+    from app.logs.models import ModelLog
+
+    captured: dict[str, object] = {}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured["url"] = url
+        captured["authorization"] = headers["Authorization"]
+        captured["model"] = json["model"]
+        captured["content"] = json["messages"][0]["content"]
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "choices": [{"message": {"content": "The image shows a plotted curve."}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 7},
+            },
+        )
+
+    monkeypatch.setenv("VISION_LLM_API_KEY", "vision-key")
+    monkeypatch.setenv("VISION_LLM_BASE_URL", "https://vision.example/v1")
+    monkeypatch.setenv("VISION_LLM_MODEL", "vision-model")
+    monkeypatch.setattr(httpx, "post", fake_post)
+    get_settings.cache_clear()
+    clear_cache_backend()
+    headers = _auth_headers(client, username="ai_vision_teacher")
+
+    response = client.post(
+        "/api/ai/vision/analyze",
+        headers=headers,
+        data={"prompt": "Describe this teaching image."},
+        files={"file": ("plot.png", b"\x89PNG\r\n\x1a\nimage-bytes", "image/png")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["content"] == "The image shows a plotted curve."
+    assert body["provider_status"]["provider"] == "real"
+    assert body["provider_status"]["model"] == "vision-model"
+    assert captured["url"] == "https://vision.example/v1/chat/completions"
+    assert captured["authorization"] == "Bearer vision-key"
+    assert captured["content"][0]["text"] == "Describe this teaching image."
+
+    session_local = get_session_local()
+    with session_local() as db:
+        log = db.query(ModelLog).filter(ModelLog.task_type == "vision").one()
+
+    assert log.model == "vision-model"
+    assert log.prompt_tokens == 5
+    assert log.completion_tokens == 7
 
 
 def test_generate_text_without_key_raises_when_mock_fallback_disabled(client, monkeypatch):

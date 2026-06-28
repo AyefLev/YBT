@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -10,12 +10,13 @@ from app.ai.config_service import (
     list_ai_provider_configs,
     upsert_ai_provider_config,
 )
-from app.ai.schemas import ModelCapabilityResponse, ModelConnectivityResponse
-from app.ai.service import check_model_connectivity, _provider_config_for_role
+from app.ai.schemas import ModelCapabilityResponse, ModelConnectivityResponse, VisionAnalysisResponse
+from app.ai.service import analyze_image, check_model_connectivity, _provider_config_for_role
+from app.auth.models import User
 from app.cache.service import get_cache
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.deps import require_permission
+from app.core.deps import require_any_permission, require_permission
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -71,6 +72,46 @@ def get_model_connectivity(
             check_model_connectivity("embedding", db=db, probe=probe),
         ],
     )
+
+
+@router.post("/vision/analyze", response_model=VisionAnalysisResponse)
+def analyze_vision_image(
+    prompt: str = Form("Describe this image for teaching use."),
+    file: UploadFile = File(...),
+    current_user: User = Depends(
+        require_any_permission(
+            "lesson:create",
+            "exercise:create",
+            "material:upload",
+            "admin:content_manage",
+        )
+    ),
+    db: Session = Depends(get_db),
+) -> VisionAnalysisResponse:
+    content_type = file.content_type or "application/octet-stream"
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only image uploads are supported")
+
+    image_bytes = file.file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image file is empty")
+    if len(image_bytes) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image file is too large")
+
+    try:
+        result = analyze_image(
+            db,
+            image_bytes=image_bytes,
+            mime_type=content_type,
+            prompt=prompt,
+            user_id=current_user.id,
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return VisionAnalysisResponse(content=result.content, provider_status=result)
 
 
 @router.get("/admin/provider-configs", response_model=list[AIProviderConfigRead])

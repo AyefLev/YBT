@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
-import { api } from '../api/client'
+import { api, apiForm } from '../api/client'
 
 interface HealthComponent {
   status: 'healthy' | 'degraded' | 'unhealthy' | string
@@ -58,12 +58,30 @@ interface ModelConnectivity {
   checks: ModelConnectivityCheck[]
 }
 
+interface AIResult {
+  content: string
+  provider: string
+  model: string
+  fallback_used: boolean
+  error_message: string | null
+}
+
+interface VisionAnalysisResponse {
+  content: string
+  provider_status: AIResult
+}
+
 const health = ref<SystemHealth | null>(null)
 const connectivity = ref<ModelConnectivity | null>(null)
 const loading = ref(false)
 const probing = ref(false)
+const visionTesting = ref(false)
 const error = ref('')
 const probeError = ref('')
+const visionError = ref('')
+const visionPrompt = ref('请分析这张图片里可用于教学的关键信息，并给出可转成课件或习题的建议。')
+const visionFile = ref<File | null>(null)
+const visionAnalysis = ref<VisionAnalysisResponse | null>(null)
 
 const overallText = computed(() => statusLabel(health.value?.overall_status ?? 'unknown'))
 
@@ -93,6 +111,33 @@ async function probeModels() {
     probeError.value = err instanceof Error ? err.message : '模型连通性检测失败'
   } finally {
     probing.value = false
+  }
+}
+
+function selectVisionFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  visionFile.value = input.files?.[0] ?? null
+  visionAnalysis.value = null
+  visionError.value = ''
+}
+
+async function analyzeVisionImage() {
+  if (!visionFile.value) {
+    visionError.value = '请先选择一张图片。'
+    return
+  }
+  visionTesting.value = true
+  visionError.value = ''
+  visionAnalysis.value = null
+  const form = new FormData()
+  form.append('prompt', visionPrompt.value)
+  form.append('file', visionFile.value)
+  try {
+    visionAnalysis.value = await apiForm<VisionAnalysisResponse>('/api/ai/vision/analyze', form)
+  } catch (err) {
+    visionError.value = err instanceof Error ? err.message : '视觉模型测试失败'
+  } finally {
+    visionTesting.value = false
   }
 }
 
@@ -280,6 +325,35 @@ onMounted(loadHealth)
         </div>
         <p class="notice">{{ health.demo.suggested_next_action }}</p>
       </section>
+      <section class="panel stack">
+        <div class="panel-title">
+          <h2>视觉模型图片测试</h2>
+          <small>上传一张教学图片，直接调用已配置的视觉模型。</small>
+        </div>
+        <div class="vision-test-grid">
+          <label>
+            测试提示词
+            <textarea v-model.trim="visionPrompt" rows="4" />
+          </label>
+          <label>
+            图片
+            <input type="file" accept="image/*" @change="selectVisionFile" />
+          </label>
+        </div>
+        <button
+          type="button"
+          class="btn-primary"
+          :disabled="visionTesting || !visionFile"
+          @click="analyzeVisionImage"
+        >
+          {{ visionTesting ? '分析中...' : '测试视觉模型' }}
+        </button>
+        <p v-if="visionError" class="alert" role="alert">{{ visionError }}</p>
+        <div v-if="visionAnalysis" class="vision-result">
+          <strong>{{ visionAnalysis.provider_status.model }}</strong>
+          <p>{{ visionAnalysis.content }}</p>
+        </div>
+      </section>
     </template>
   </section>
 </template>
@@ -380,10 +454,32 @@ onMounted(loadHealth)
   text-align: center;
 }
 
+.vision-test-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.5fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.vision-result {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 12px;
+  background: #eff6ff;
+}
+
+.vision-result p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 900px) {
   .health-metrics,
   .connectivity-grid,
-  .ready-grid {
+  .ready-grid,
+  .vision-test-grid {
     grid-template-columns: 1fr;
   }
 
