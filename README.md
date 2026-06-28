@@ -69,7 +69,7 @@ LLM_MOCK_ON_FAILURE=true
 VECTOR_STORE_PROVIDER=qdrant
 QDRANT_URL=http://qdrant:6333
 QDRANT_COLLECTION=yanbeitong_material_chunks
-EMBEDDING_MODEL=local-hash-embedding-v1
+EMBEDDING_MODEL=text-embedding-v4
 EMBEDDING_DIMENSIONS=128
 ```
 
