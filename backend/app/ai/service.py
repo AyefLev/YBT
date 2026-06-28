@@ -134,27 +134,41 @@ def review_generated_content(
         )
 
     prompt = build_review_prompt(task_type, content)
-    result = generate_text(
-        db,
-        f"{task_type}_review",
-        prompt,
-        model=reviewer_model,
-        user_id=user_id,
-    )
+    try:
+        result = generate_text(
+            db,
+            f"{task_type}_review",
+            prompt,
+            model=reviewer_model,
+            user_id=user_id,
+        )
+    except Exception:
+        return AIReview(
+            enabled=True,
+            status="failed",
+            reviewer_model=reviewer_model,
+            warnings=["Reviewer request failed. Generated content was preserved."],
+            suggestions=["Retry the review later."],
+            raw_review="",
+        )
+
     warnings, suggestions = _extract_review_items(result.content)
     status = "warning" if warnings else "passed"
     revised_content = None
     if warnings and auto_revise:
         revise_model = _provider_config_for_role(settings, "revise", db=db).model
         revise_prompt = build_revise_prompt(task_type, content, result.content)
-        revise_result = generate_text(
-            db,
-            f"{task_type}_revise",
-            revise_prompt,
-            model=revise_model,
-            user_id=user_id,
-        )
-        revised_content = revise_result.content
+        try:
+            revise_result = generate_text(
+                db,
+                f"{task_type}_revise",
+                revise_prompt,
+                model=revise_model,
+                user_id=user_id,
+            )
+            revised_content = revise_result.content
+        except Exception:
+            suggestions.append("Automatic revision failed; original content was preserved.")
 
     return AIReview(
         enabled=True,

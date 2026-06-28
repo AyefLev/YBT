@@ -501,7 +501,6 @@ def test_review_generation_preserves_content_when_revision_times_out(client, mon
                         {
                             "message": {
                                 "content": (
-                                    "Status: warning\n"
                                     "Warnings: Answer needs clarification\n"
                                     "Suggestions: Add a clearer explanation"
                                 )
@@ -537,9 +536,9 @@ def test_review_generation_preserves_content_when_revision_times_out(client, mon
 
     assert review.status == "warning"
     assert review.revised_content is None
-    assert review.warnings == ["Answer needs clarification"]
+    assert review.warnings == ["Warnings: Answer needs clarification"]
     assert review.suggestions == [
-        "Add a clearer explanation",
+        "Suggestions: Add a clearer explanation",
         "Automatic revision failed; original content was preserved.",
     ]
 

@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     revise_llm_base_url: str = ""
     revise_llm_api_key: str = ""
     llm_multi_agent_review: bool = False
-    llm_timeout_seconds: int = 60
+    llm_timeout_seconds: int = 120
     llm_mock_on_failure: bool = False
     vision_llm_base_url: str = ""
     vision_llm_api_key: str = ""
