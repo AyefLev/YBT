@@ -1,3 +1,151 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+
+import { useAuthStore } from '../stores/auth'
+
+const auth = useAuthStore()
+const router = useRouter()
+const route = useRoute()
+const SIDEBAR_COLLAPSED_KEY = 'workbench-sidebar-collapsed'
+const sidebarCollapsed = ref(
+  typeof localStorage !== 'undefined' && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true',
+)
+const collapsedGroups = ref<Set<string>>(new Set())
+
+const userName = computed(() => auth.user?.display_name || auth.user?.username || '用户')
+
+const userRoleText = computed(() => {
+  if (auth.user?.roles.includes('admin')) return '管理员'
+  if (auth.user?.roles.includes('teaching_manager')) return '教管'
+  if (auth.user?.roles.includes('student')) return '学生'
+  if (auth.user?.account_status === 'pending') return '待审核教师'
+  return '教师'
+})
+
+function hasPermission(permission: string): boolean {
+  return auth.user?.permissions.includes(permission) ?? false
+}
+
+function hasAnyPermission(...permissions: string[]): boolean {
+  return permissions.some((permission) => hasPermission(permission))
+}
+
+interface NavChild {
+  label: string
+  to: string
+  show: boolean
+}
+
+interface NavGroup {
+  label: string
+  to?: string
+  show: boolean
+  children?: NavChild[]
+}
+
+const navGroups = computed<NavGroup[]>(() =>
+  [
+    { label: '工作台', to: '/dashboard', show: true },
+    {
+      label: '教案',
+      show: hasAnyPermission('lesson:create', 'lesson:view_all'),
+      children: [
+        { label: '生成教案', to: '/dashboard/lesson/generate', show: hasPermission('lesson:create') },
+        { label: '已有教案', to: '/dashboard/lesson/records', show: hasAnyPermission('lesson:create', 'lesson:view_all') },
+      ],
+    },
+    {
+      label: '练习题',
+      show: hasAnyPermission('exercise:create', 'exercise:view_all'),
+      children: [
+        { label: '生成练习', to: '/dashboard/exercise/generate', show: hasPermission('exercise:create') },
+        { label: '已有练习', to: '/dashboard/exercise/records', show: hasAnyPermission('exercise:create', 'exercise:view_all') },
+        { label: '题库管理', to: '/dashboard/questions', show: hasAnyPermission('exercise:create', 'question:view_all') },
+      ],
+    },
+    {
+      label: '资料课程',
+      show: hasAnyPermission('material:upload', 'material:view_all', 'material:view_public', 'course:create', 'course:view_all'),
+      children: [
+        { label: '资料列表', to: '/dashboard/materials/library', show: hasAnyPermission('material:upload', 'material:view_all', 'material:view_public') },
+        { label: '上传资料', to: '/dashboard/materials/upload', show: hasPermission('material:upload') },
+        { label: '课程体系', to: '/dashboard/courses', show: hasAnyPermission('course:create', 'course:view_all') },
+      ],
+    },
+    {
+      label: '班级教学',
+      show: hasAnyPermission('class:manage', 'class:join', 'class:view_all'),
+      children: [
+        { label: '班级与作业', to: '/dashboard/classrooms', show: hasAnyPermission('class:manage', 'class:join', 'class:view_all') },
+      ],
+    },
+    {
+      label: '审核运维',
+      show: hasAnyPermission('review:manage', 'lesson:create', 'log:view'),
+      children: [
+        { label: '教研审核', to: '/dashboard/reviews', show: hasPermission('review:manage') },
+        { label: '内容检查', to: '/dashboard/compliance', show: hasPermission('lesson:create') },
+        { label: '运行总览', to: '/dashboard/observability', show: hasPermission('log:view') },
+        { label: 'Token 与费用', to: '/dashboard/observability/token', show: hasPermission('log:view') },
+        { label: '系统检查', to: '/dashboard/health', show: hasPermission('log:view') },
+      ],
+    },
+    {
+      label: '系统管理',
+      show: hasAnyPermission('admin:user_manage', 'admin:content_manage'),
+      children: [
+        { label: '用户管理', to: '/dashboard/admin/users', show: hasPermission('admin:user_manage') },
+        { label: 'API 管理', to: '/dashboard/admin/api', show: hasPermission('admin:content_manage') },
+      ],
+    },
+    {
+      label: '资源库',
+      to: '/dashboard/resources',
+      show: hasAnyPermission('lesson:create', 'exercise:create', 'material:upload', 'material:view_public', 'course:create', 'question:view_all'),
+    },
+  ]
+    .map((group) => ({
+      ...group,
+      children: group.children?.filter((child) => child.show),
+    }))
+    .filter((group) => group.show && (!group.children || group.children.length)),
+)
+
+async function logout() {
+  auth.logout()
+  await router.push('/login')
+}
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value))
+  }
+}
+
+function isGroupOpen(group: NavGroup): boolean {
+  if (!group.children?.length) return false
+  if (collapsedGroups.value.has(group.label)) return false
+  return true
+}
+
+function toggleGroup(group: NavGroup) {
+  const next = new Set(collapsedGroups.value)
+  if (next.has(group.label)) {
+    next.delete(group.label)
+  } else {
+    next.add(group.label)
+  }
+  collapsedGroups.value = next
+}
+
+function groupActive(group: NavGroup): boolean {
+  if (group.to && route.path === group.to) return true
+  return group.children?.some((child) => route.path === child.to || route.path.startsWith(`${child.to}/`)) ?? false
+}
+</script>
+
 <template>
   <div class="workbench" :class="{ collapsed: sidebarCollapsed }">
     <aside class="sidebar">
