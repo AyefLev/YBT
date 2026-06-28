@@ -83,6 +83,32 @@ def test_upload_txt_material_and_retrieve_chinese_query(client):
     assert "小作文" in results[0]["content"]
 
 
+def test_material_chunks_strip_nul_characters_before_storage(client):
+    headers = _auth_headers(client, username="teacher_nul_material")
+
+    upload_response = _upload_txt(
+        client,
+        headers,
+        "NUL Character Material",
+        "matrix\x00 multiplication",
+    )
+
+    assert upload_response.status_code == 201
+    uploaded = upload_response.json()
+    assert uploaded["parse_status"] == "parsed"
+
+    chunks_response = client.get(
+        f"/api/materials/{uploaded['id']}/chunks",
+        headers=headers,
+    )
+
+    assert chunks_response.status_code == 200
+    chunks = chunks_response.json()
+    assert chunks
+    assert "\x00" not in chunks[0]["content"]
+    assert "matrix multiplication" in chunks[0]["content"]
+
+
 def test_owner_can_retrieve_without_material_ids(client):
     headers = _auth_headers(client, username="teacher_owner")
     upload_response = _upload_txt(client, headers, "Owner Material", "小作文 格式 称呼 正文 结尾")

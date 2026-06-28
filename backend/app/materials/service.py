@@ -412,6 +412,7 @@ def _split_text(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[str]:
+    text = text.replace("\x00", "")
     paragraphs = [line.strip() for line in text.splitlines() if line.strip()]
     normalized = "\n".join(paragraphs).strip()
     if not normalized:
