@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
+import { buildWorkbenchNavigation, type WorkbenchNavGroup } from '../navigation/workbenchNavigation'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
@@ -23,6 +24,8 @@ const userRoleText = computed(() => {
   return '教师'
 })
 
+const userInitial = computed(() => userName.value.slice(0, 1).toUpperCase())
+
 function hasPermission(permission: string): boolean {
   return auth.user?.permissions.includes(permission) ?? false
 }
@@ -31,86 +34,7 @@ function hasAnyPermission(...permissions: string[]): boolean {
   return permissions.some((permission) => hasPermission(permission))
 }
 
-interface NavChild {
-  label: string
-  to: string
-  show: boolean
-}
-
-interface NavGroup {
-  label: string
-  to?: string
-  show: boolean
-  children?: NavChild[]
-}
-
-const navGroups = computed<NavGroup[]>(() =>
-  [
-    { label: '工作台', to: '/dashboard', show: true },
-    {
-      label: '教案',
-      show: hasAnyPermission('lesson:create', 'lesson:view_all'),
-      children: [
-        { label: '生成教案', to: '/dashboard/lesson/generate', show: hasPermission('lesson:create') },
-        { label: '已有教案', to: '/dashboard/lesson/records', show: hasAnyPermission('lesson:create', 'lesson:view_all') },
-      ],
-    },
-    {
-      label: '练习题',
-      show: hasAnyPermission('exercise:create', 'exercise:view_all'),
-      children: [
-        { label: '生成练习', to: '/dashboard/exercise/generate', show: hasPermission('exercise:create') },
-        { label: '已有练习', to: '/dashboard/exercise/records', show: hasAnyPermission('exercise:create', 'exercise:view_all') },
-        { label: '题库管理', to: '/dashboard/questions', show: hasAnyPermission('exercise:create', 'question:view_all') },
-      ],
-    },
-    {
-      label: '资料课程',
-      show: hasAnyPermission('material:upload', 'material:view_all', 'material:view_public', 'course:create', 'course:view_all'),
-      children: [
-        { label: '资料列表', to: '/dashboard/materials/library', show: hasAnyPermission('material:upload', 'material:view_all', 'material:view_public') },
-        { label: '上传资料', to: '/dashboard/materials/upload', show: hasPermission('material:upload') },
-        { label: '课程体系', to: '/dashboard/courses', show: hasAnyPermission('course:create', 'course:view_all') },
-      ],
-    },
-    {
-      label: '班级教学',
-      show: hasAnyPermission('class:manage', 'class:join', 'class:view_all'),
-      children: [
-        { label: '班级与作业', to: '/dashboard/classrooms', show: hasAnyPermission('class:manage', 'class:join', 'class:view_all') },
-      ],
-    },
-    {
-      label: '审核运维',
-      show: hasAnyPermission('review:manage', 'lesson:create', 'log:view'),
-      children: [
-        { label: '教研审核', to: '/dashboard/reviews', show: hasPermission('review:manage') },
-        { label: '内容检查', to: '/dashboard/compliance', show: hasPermission('lesson:create') },
-        { label: '运行总览', to: '/dashboard/observability', show: hasPermission('log:view') },
-        { label: 'Token 与费用', to: '/dashboard/observability/token', show: hasPermission('log:view') },
-        { label: '系统检查', to: '/dashboard/health', show: hasPermission('log:view') },
-      ],
-    },
-    {
-      label: '系统管理',
-      show: hasAnyPermission('admin:user_manage', 'admin:content_manage'),
-      children: [
-        { label: '用户管理', to: '/dashboard/admin/users', show: hasPermission('admin:user_manage') },
-        { label: 'API 管理', to: '/dashboard/admin/api', show: hasPermission('admin:content_manage') },
-      ],
-    },
-    {
-      label: '资源库',
-      to: '/dashboard/resources',
-      show: hasAnyPermission('lesson:create', 'exercise:create', 'material:upload', 'material:view_public', 'course:create', 'question:view_all'),
-    },
-  ]
-    .map((group) => ({
-      ...group,
-      children: group.children?.filter((child) => child.show),
-    }))
-    .filter((group) => group.show && (!group.children || group.children.length)),
-)
+const navGroups = computed(() => buildWorkbenchNavigation({ hasPermission, hasAnyPermission }))
 
 async function logout() {
   auth.logout()
@@ -124,13 +48,13 @@ function toggleSidebar() {
   }
 }
 
-function isGroupOpen(group: NavGroup): boolean {
+function isGroupOpen(group: WorkbenchNavGroup): boolean {
   if (!group.children?.length) return false
   if (collapsedGroups.value.has(group.label)) return false
   return true
 }
 
-function toggleGroup(group: NavGroup) {
+function toggleGroup(group: WorkbenchNavGroup) {
   const next = new Set(collapsedGroups.value)
   if (next.has(group.label)) {
     next.delete(group.label)
@@ -140,24 +64,43 @@ function toggleGroup(group: NavGroup) {
   collapsedGroups.value = next
 }
 
-function groupActive(group: NavGroup): boolean {
+function groupActive(group: WorkbenchNavGroup): boolean {
   if (group.to && route.path === group.to) return true
   return group.children?.some((child) => route.path === child.to || route.path.startsWith(`${child.to}/`)) ?? false
+}
+
+function navGlyph(label: string): string {
+  const glyphs: Record<string, string> = {
+    工作台: '台',
+    教案: '案',
+    练习题: '题',
+    资料课程: '资',
+    班级教学: '班',
+    审核运维: '审',
+    系统管理: '管',
+    资源库: '库',
+  }
+  return glyphs[label] ?? label.slice(0, 1)
 }
 </script>
 
 <template>
   <div class="workbench" :class="{ collapsed: sidebarCollapsed }">
-    <aside class="sidebar">
+    <aside class="sidebar" aria-label="工作台侧边栏">
       <div class="brand">
-        <span class="logo">研</span>
+        <span class="logo" aria-hidden="true">研</span>
         <div class="brand-text">
           <strong>研备通 AI</strong>
-          <span>智能教研平台</span>
+          <span>智能教研工作台</span>
         </div>
-        <button type="button" class="collapse-toggle" @click="toggleSidebar" :title="sidebarCollapsed ? '展开' : '收起'">
-          <svg v-if="!sidebarCollapsed" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        <button
+          type="button"
+          class="collapse-toggle"
+          :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          @click="toggleSidebar"
+        >
+          <span aria-hidden="true">{{ sidebarCollapsed ? '›' : '‹' }}</span>
         </button>
       </div>
 
@@ -169,10 +112,10 @@ function groupActive(group: NavGroup): boolean {
             class="nav-link"
             :class="{ active: route.path === group.to }"
           >
-            <span class="nav-icon" aria-hidden="true"></span>
+            <span class="nav-glyph" aria-hidden="true">{{ navGlyph(group.label) }}</span>
             <span class="nav-full">{{ group.label }}</span>
-            <span class="nav-short">{{ group.label.slice(0, 1) }}</span>
           </RouterLink>
+
           <div v-else class="nav-section">
             <button
               type="button"
@@ -180,11 +123,9 @@ function groupActive(group: NavGroup): boolean {
               :class="{ active: groupActive(group) }"
               @click="toggleGroup(group)"
             >
+              <span class="nav-glyph" aria-hidden="true">{{ navGlyph(group.label) }}</span>
               <span class="nav-full">{{ group.label }}</span>
-              <span class="nav-short">{{ group.label.slice(0, 1) }}</span>
-              <span class="nav-arrow" :class="{ open: isGroupOpen(group) }">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-              </span>
+              <span class="nav-arrow" :class="{ open: isGroupOpen(group) }" aria-hidden="true">⌄</span>
             </button>
             <div class="nav-children-wrapper" :class="{ open: isGroupOpen(group) }">
               <div class="nav-children">
@@ -194,8 +135,8 @@ function groupActive(group: NavGroup): boolean {
                   :to="child.to"
                   class="nav-child"
                 >
+                  <span class="nav-child-marker" aria-hidden="true" />
                   <span class="nav-full">{{ child.label }}</span>
-                  <span class="nav-short">{{ child.label.slice(0, 1) }}</span>
                 </RouterLink>
               </div>
             </div>
@@ -204,15 +145,13 @@ function groupActive(group: NavGroup): boolean {
       </nav>
 
       <div class="account">
-        <div class="account-info">
-          <div class="avatar">{{ userName.slice(0, 1).toUpperCase() }}</div>
-          <div class="account-details">
-            <strong>{{ userName }}</strong>
-            <small>{{ userRoleText }}</small>
-          </div>
+        <div class="avatar" aria-hidden="true">{{ userInitial }}</div>
+        <div class="account-details">
+          <strong>{{ userName }}</strong>
+          <small>{{ userRoleText }}</small>
         </div>
-        <button type="button" class="btn-logout" @click="logout" title="退出登录">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+        <button type="button" class="btn-logout" title="退出登录" aria-label="退出登录" @click="logout">
+          退
         </button>
       </div>
     </aside>
@@ -222,9 +161,10 @@ function groupActive(group: NavGroup): boolean {
       type="button"
       class="sidebar-reopen"
       aria-label="展开侧边栏"
+      title="展开侧边栏"
       @click="toggleSidebar"
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      ›
     </button>
 
     <main class="content">
@@ -237,9 +177,9 @@ function groupActive(group: NavGroup): boolean {
 .workbench {
   display: grid;
   min-height: 100vh;
-  grid-template-columns: 280px minmax(0, 1fr);
-  background: #f8fafc;
-  transition: grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  grid-template-columns: 268px minmax(0, 1fr);
+  background: var(--bg);
+  transition: grid-template-columns 0.22s ease;
 }
 
 .workbench.collapsed {
@@ -249,134 +189,169 @@ function groupActive(group: NavGroup): boolean {
 .sidebar {
   position: sticky;
   top: 0;
+  z-index: 30;
   display: flex;
   height: 100vh;
-  flex-direction: column;
   min-width: 0;
-  border-right: 1px solid #e2e8f0;
-  background: #ffffff;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96)),
+    var(--surface);
   overflow: hidden;
-  padding: 24px 20px;
-  box-shadow: 4px 0 24px rgba(15, 23, 42, 0.02);
-  transition: padding 0.3s ease, opacity 0.3s ease;
-  z-index: 40;
+  padding: 20px 16px;
 }
 
 .brand {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 32px;
-  gap: 12px;
+  grid-template-columns: 40px minmax(0, 1fr) 34px;
+  gap: 11px;
   align-items: center;
-  margin-bottom: 32px;
-}
-
-.collapse-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: #64748b;
-  background: transparent;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.collapse-toggle:hover {
-  background: #f1f5f9;
-  color: #0f172a;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 16px;
+  padding-bottom: 16px;
 }
 
 .logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
   width: 40px;
   height: 40px;
+  place-items: center;
   border-radius: 10px;
   color: #ffffff;
-  background: linear-gradient(135deg, #2563eb, #3b82f6);
-  font-size: 1.1rem;
-  font-weight: 800;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+  background: var(--brand);
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
+  font-weight: 900;
 }
 
 .brand-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  gap: 3px;
   min-width: 0;
 }
 
 .brand-text strong {
-  color: #0f172a;
-  font-size: 1.1rem;
-  font-weight: 700;
-  white-space: nowrap;
   overflow: hidden;
+  color: var(--text);
+  font-size: 1.02rem;
+  font-weight: 850;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand-text span {
-  color: #64748b;
-  font-size: 0.75rem;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapse-toggle,
+.sidebar-reopen,
+.btn-logout {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--muted-strong);
+  background: var(--surface);
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.08s ease;
+}
+
+.collapse-toggle {
+  width: 34px;
+  height: 34px;
+  font-size: 1.3rem;
+}
+
+.collapse-toggle:hover,
+.sidebar-reopen:hover,
+.btn-logout:hover {
+  border-color: var(--line-strong);
+  color: var(--brand-dark);
+  background: var(--brand-soft);
 }
 
 nav {
   display: flex;
-  flex-direction: column;
   flex: 1 1 auto;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 2px;
   scrollbar-gutter: stable;
 }
 
 nav::-webkit-scrollbar {
-  width: 4px;
+  width: 5px;
 }
+
 nav::-webkit-scrollbar-thumb {
+  border-radius: 999px;
   background: #cbd5e1;
-  border-radius: 4px;
 }
 
 .nav-section {
+  display: grid;
+  gap: 3px;
+}
+
+.nav-link,
+.nav-parent,
+.nav-child {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--muted-strong);
+  background: transparent;
+  font-weight: 760;
+  text-align: left;
+  text-decoration: none;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
 }
 
 .nav-link,
 .nav-parent {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  border-radius: 10px;
-  padding: 10px 14px;
-  color: #475569;
-  background: transparent;
-  font-weight: 600;
-  font-size: 0.95rem;
-  text-decoration: none;
-  transition: all 0.2s ease;
-  cursor: pointer;
-  border: none;
-  text-align: left;
+  gap: 10px;
+  padding: 10px 11px;
 }
 
-.nav-short {
-  display: none;
+.nav-glyph {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--muted-strong);
+  background: var(--surface-muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.nav-full {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-arrow {
   margin-left: auto;
   color: #94a3b8;
-  display: flex;
-  align-items: center;
-  transition: transform 0.3s ease;
+  font-weight: 900;
+  transition: transform 0.16s ease;
 }
 
 .nav-arrow.open {
@@ -386,7 +361,7 @@ nav::-webkit-scrollbar-thumb {
 .nav-children-wrapper {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 0.3s ease;
+  transition: grid-template-rows 0.18s ease;
 }
 
 .nav-children-wrapper.open {
@@ -394,219 +369,176 @@ nav::-webkit-scrollbar-thumb {
 }
 
 .nav-children {
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 2px;
-  padding-left: 14px;
-  margin-left: 20px;
-  border-left: 1px solid #e2e8f0;
-  margin-top: 4px;
-  margin-bottom: 4px;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  margin: 2px 0 5px 22px;
+  padding-left: 10px;
 }
 
 .nav-child {
-  display: flex;
-  align-items: center;
-  padding: 8px 16px;
-  border-radius: 8px;
-  color: #64748b;
-  font-size: 0.9rem;
-  font-weight: 500;
-  text-decoration: none;
-  transition: all 0.2s ease;
-  position: relative;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 0.92rem;
 }
 
-.nav-child::before {
-  content: '';
-  position: absolute;
-  left: -1px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 2px;
-  height: 0;
-  background: #2563eb;
-  transition: height 0.2s ease;
+.nav-child-marker {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 999px;
+  background: #cbd5e1;
 }
 
 .nav-link:hover,
 .nav-parent:hover,
 .nav-child:hover {
-  background: #f8fafc;
-  color: #0f172a;
-}
-
-.nav-child:hover::before {
-  height: 12px;
+  color: var(--text);
+  background: var(--surface-muted);
 }
 
 .nav-parent.active,
 .nav-link.active,
 .nav-child.router-link-active,
-.nav-link.exact.router-link-exact-active {
-  color: #2563eb;
-  background: #eff6ff;
+.nav-link.router-link-exact-active {
+  color: var(--brand-ink);
+  background: var(--brand-soft);
 }
 
-.nav-child.router-link-active::before {
-  height: 100%;
+.nav-parent.active .nav-glyph,
+.nav-link.active .nav-glyph {
+  color: #ffffff;
+  background: var(--brand);
+}
+
+.nav-child.router-link-active .nav-child-marker {
+  background: var(--brand);
 }
 
 .account {
-  display: flex;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 34px;
+  gap: 10px;
   align-items: center;
-  justify-content: space-between;
-  flex: none;
-  margin-top: auto;
-  border-top: 1px solid #e2e8f0;
-  padding-top: 20px;
-}
-
-.account-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 16px;
 }
 
 .avatar {
+  display: grid;
   width: 36px;
   height: 36px;
-  border-radius: 50%;
-  background: #e2e8f0;
-  color: #475569;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 1rem;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--brand-ink);
+  background: var(--brand-soft);
+  font-weight: 900;
 }
 
 .account-details {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  gap: 2px;
   min-width: 0;
+}
+
+.account-details strong,
+.account-details small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .account-details strong {
-  color: #0f172a;
-  font-size: 0.9rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--text);
+  font-size: 0.92rem;
 }
 
 .account-details small {
-  color: #64748b;
-  font-size: 0.75rem;
+  color: var(--muted);
+  font-size: 0.76rem;
 }
 
 .btn-logout {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 8px;
-  color: #94a3b8;
-  background: transparent;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-logout:hover {
-  background: #fee2e2;
-  color: #ef4444;
+  width: 34px;
+  height: 34px;
+  font-size: 0.82rem;
+  font-weight: 900;
 }
 
 .content {
-  min-width: 0;
-  padding: 32px 40px;
-  max-width: 1400px;
-  margin: 0 auto;
   width: 100%;
+  max-width: var(--content-max);
+  min-width: 0;
+  margin: 0 auto;
+  padding: 30px 34px 42px;
 }
 
 .sidebar-reopen {
   position: fixed;
-  top: 24px;
-  left: 20px;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  top: 20px;
+  left: 18px;
+  z-index: 40;
   width: 40px;
   height: 40px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  color: #0f172a;
-  background: #ffffff;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.sidebar-reopen:hover {
-  background: #f8fafc;
-  color: #2563eb;
-  transform: scale(1.05);
+  box-shadow: var(--shadow-md);
+  font-size: 1.45rem;
 }
 
 .workbench.collapsed .sidebar {
-  padding: 0;
+  border-right: 0;
   opacity: 0;
+  padding: 0;
   pointer-events: none;
 }
 
-@media (max-width: 1024px) {
+.workbench.collapsed .content {
+  padding-left: 76px;
+}
+
+@media (max-width: 1080px) {
   .workbench {
-    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-columns: 244px minmax(0, 1fr);
   }
+
   .content {
     padding: 24px;
   }
 }
 
 @media (max-width: 860px) {
-  .workbench, .workbench.collapsed {
-    display: flex;
-    flex-direction: column;
+  .workbench,
+  .workbench.collapsed {
+    display: block;
   }
 
   .sidebar {
     position: static;
     height: auto;
-    padding: 20px;
-    border-right: none;
-    border-bottom: 1px solid #e2e8f0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
     opacity: 1;
+    padding: 16px;
     pointer-events: auto;
   }
 
-  nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 8px;
-    overflow-y: visible;
-  }
-
-  .nav-section, .nav-link {
-    width: auto;
-  }
-
-  .nav-children-wrapper {
-    display: none; /* Simplify mobile view */
-  }
-
   .brand {
-    grid-template-columns: 40px minmax(0, 1fr) auto;
-    margin-bottom: 20px;
+    grid-template-columns: 40px minmax(0, 1fr);
   }
 
-  .collapse-toggle, .sidebar-reopen {
+  .collapse-toggle,
+  .sidebar-reopen {
     display: none;
+  }
+
+  nav {
+    max-height: 48vh;
+  }
+
+  .content,
+  .workbench.collapsed .content {
+    padding: 20px;
   }
 }
 </style>

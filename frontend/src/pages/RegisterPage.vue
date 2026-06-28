@@ -39,20 +39,32 @@ async function submit() {
 <template>
   <main class="auth-page">
     <section class="auth-card">
-      <p class="eyebrow">研备通 AI</p>
-      <h1>注册账号</h1>
-      <p class="intro">创建教师或学生账号后会自动登录工作台；教师也可以选择提交审核申请。</p>
+      <div class="brand-line">
+        <span class="brand-mark">研</span>
+        <div>
+          <strong>研备通 AI</strong>
+          <small>智能教研工作台</small>
+        </div>
+      </div>
+
+      <div class="auth-heading">
+        <p class="eyebrow">注册</p>
+        <h1>创建账号</h1>
+        <p>教师账号可提交审核申请，审核通过后即可使用教案、习题、资料和班级教学能力。</p>
+      </div>
 
       <form class="stack" @submit.prevent="submit">
-        <label>
-          用户名
-          <input v-model.trim="username" autocomplete="username" required />
-        </label>
+        <div class="auth-grid">
+          <label>
+            用户名
+            <input v-model.trim="username" autocomplete="username" required />
+          </label>
 
-        <label>
-          邮箱
-          <input v-model.trim="email" type="email" autocomplete="email" required />
-        </label>
+          <label>
+            邮箱
+            <input v-model.trim="email" type="email" autocomplete="email" required />
+          </label>
+        </div>
 
         <label>
           显示名称
@@ -104,37 +116,96 @@ async function submit() {
   place-items: center;
   padding: 24px;
   background:
-    linear-gradient(135deg, rgba(37, 99, 235, 0.14), transparent 42%),
+    linear-gradient(180deg, rgba(37, 99, 235, 0.08), transparent 42%),
     var(--bg);
 }
 
 .auth-card {
-  width: min(100%, 470px);
+  display: grid;
+  width: min(100%, 520px);
+  gap: 22px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 30px;
+  border-radius: var(--radius-lg);
+  padding: 28px;
   background: var(--surface);
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-md);
 }
 
-h1 {
-  margin: 0;
-  font-size: 1.8rem;
+.brand-line {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 18px;
 }
 
-.intro {
-  margin: 10px 0 24px;
+.brand-mark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 10px;
+  color: #ffffff;
+  background: var(--brand);
+  font-weight: 900;
+}
+
+.brand-line div,
+.auth-heading {
+  display: grid;
+  gap: 3px;
+}
+
+.brand-line strong {
+  color: var(--text);
+  font-weight: 850;
+}
+
+.brand-line small,
+.auth-heading p,
+.switch {
   color: var(--muted);
+}
+
+.auth-heading {
+  gap: 8px;
+}
+
+.auth-heading h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.85rem;
+  line-height: 1.15;
+}
+
+.auth-heading p {
+  margin: 0;
+  line-height: 1.65;
+}
+
+.auth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .switch {
-  margin: 18px 0 0;
-  color: var(--muted);
+  margin: 0;
 }
 
 .switch a {
-  color: var(--brand);
-  font-weight: 800;
+  color: var(--brand-dark);
+  font-weight: 850;
   text-decoration: none;
+}
+
+.switch a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 620px) {
+  .auth-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
