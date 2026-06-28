@@ -386,6 +386,45 @@ def test_review_generation_uses_review_provider_credentials(client, monkeypatch)
     assert captured["model"] == "review-model"
 
 
+def test_review_generation_preserves_content_when_reviewer_times_out(client, monkeypatch):
+    import httpx
+
+    from app.ai.service import review_generated_content
+    from app.core.config import get_settings
+    from app.core.database import get_session_local
+
+    def fake_post(url, *, headers, json, timeout):
+        raise httpx.ReadTimeout(
+            "review timed out",
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setenv("LLM_API_KEY", "generate-key")
+    monkeypatch.setenv("REVIEW_LLM_API_KEY", "review-key")
+    monkeypatch.setenv("REVIEW_LLM_BASE_URL", "https://review.example/v1")
+    monkeypatch.setenv("LLM_REVIEW_MODEL", "review-model")
+    monkeypatch.setenv("LLM_MULTI_AGENT_REVIEW", "true")
+    monkeypatch.setenv("LLM_MOCK_ON_FAILURE", "false")
+    monkeypatch.setattr(httpx, "post", fake_post)
+    get_settings.cache_clear()
+
+    session_local = get_session_local()
+    with session_local() as db:
+        review = review_generated_content(
+            db,
+            task_type="exercise",
+            content="Generated exercise content.",
+        )
+
+    assert review.enabled is True
+    assert review.status == "failed"
+    assert review.reviewer_model == "review-model"
+    assert review.revised_content is None
+    assert review.raw_review == ""
+    assert review.warnings == ["Reviewer request failed. Generated content was preserved."]
+    assert review.suggestions == ["Retry the review later."]
+
+
 def test_review_generation_calls_revise_provider_when_warnings_present(client, monkeypatch):
     import httpx
 
@@ -443,6 +482,66 @@ def test_review_generation_calls_revise_provider_when_warnings_present(client, m
     assert calls[1]["authorization"] == "Bearer revise-key"
     assert calls[1]["model"] == "revise-model"
     assert "Warnings: 题型不匹配" in str(calls[1]["prompt"])
+
+
+def test_review_generation_preserves_content_when_revision_times_out(client, monkeypatch):
+    import httpx
+
+    from app.ai.service import review_generated_content
+    from app.core.config import get_settings
+    from app.core.database import get_session_local
+
+    def fake_post(url, *, headers, json, timeout):
+        if "review.example" in url:
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", url),
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    "Status: warning\n"
+                                    "Warnings: Answer needs clarification\n"
+                                    "Suggestions: Add a clearer explanation"
+                                )
+                            }
+                        }
+                    ],
+                },
+            )
+        raise httpx.ReadTimeout(
+            "revision timed out",
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setenv("LLM_API_KEY", "generate-key")
+    monkeypatch.setenv("REVIEW_LLM_API_KEY", "review-key")
+    monkeypatch.setenv("REVIEW_LLM_BASE_URL", "https://review.example/v1")
+    monkeypatch.setenv("LLM_REVIEW_MODEL", "review-model")
+    monkeypatch.setenv("REVISE_LLM_API_KEY", "revise-key")
+    monkeypatch.setenv("REVISE_LLM_BASE_URL", "https://revise.example/v1")
+    monkeypatch.setenv("LLM_REVISE_MODEL", "revise-model")
+    monkeypatch.setenv("LLM_MULTI_AGENT_REVIEW", "true")
+    monkeypatch.setenv("LLM_MOCK_ON_FAILURE", "false")
+    monkeypatch.setattr(httpx, "post", fake_post)
+    get_settings.cache_clear()
+
+    session_local = get_session_local()
+    with session_local() as db:
+        review = review_generated_content(
+            db,
+            task_type="exercise",
+            content="Generated exercise content.",
+        )
+
+    assert review.status == "warning"
+    assert review.revised_content is None
+    assert review.warnings == ["Answer needs clarification"]
+    assert review.suggestions == [
+        "Add a clearer explanation",
+        "Automatic revision failed; original content was preserved.",
+    ]
 
 
 def test_generate_text_can_use_explicit_mock_fallback_for_lesson_and_logs(client, monkeypatch):
