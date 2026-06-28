@@ -10,6 +10,7 @@ from pptx import Presentation as PptxPresentation
 from pptx.util import Pt
 from sqlalchemy.orm import Session
 
+from app.ai.prompts import POSTGRADUATE_AUDIENCE_REQUIREMENTS
 from app.ai.schemas import AIResult
 from app.ai.service import generate_text
 from app.auth.models import User
@@ -89,6 +90,9 @@ def _build_presentation_prompt(
             "Return only JSON in this shape:",
             '{"slides":[{"title":"...","bullets":["..."],"speaker_notes":"...","visual_prompt":"..."}]}',
             "Keep each slide focused and suitable for classroom teaching.",
+            "Design each slide as a class-ready postgraduate entrance exam lesson: concise title, progressive bullets, worked-example flow, and speaker notes.",
+            "For visual_prompt, describe useful diagrams, formula layouts, tables, or board-writing cues instead of decorative images.",
+            POSTGRADUATE_AUDIENCE_REQUIREMENTS,
             "Lesson content:",
             lesson.current_content[:8000],
         ]

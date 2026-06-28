@@ -19,6 +19,22 @@ def _auth_headers(client, username: str = "ai_teacher") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _role_headers(client, username: str, role_name: str) -> dict[str, str]:
+    from sqlalchemy import select
+
+    from app.auth.models import Role, User
+    from app.core.database import get_session_local
+
+    headers = _auth_headers(client, username=username)
+    session_local = get_session_local()
+    with session_local() as db:
+        user = db.scalar(select(User).where(User.username == username))
+        role = db.scalar(select(Role).where(Role.name == role_name))
+        user.roles = [role]
+        db.commit()
+    return headers
+
+
 def test_exercise_prompt_constrains_comprehensive_question_format():
     from app.ai.prompts import build_exercise_prompt
 
@@ -37,6 +53,7 @@ def test_exercise_prompt_constrains_comprehensive_question_format():
     assert "不要把综合题拆成单选题" in prompt
     assert "[公式]" in prompt
     assert "[SVG]" in prompt
+    assert "面向考研备考人群" in prompt
 
 
 def test_exercise_prompt_requires_subject_and_knowledge_alignment():
@@ -58,6 +75,7 @@ def test_exercise_prompt_requires_subject_and_knowledge_alignment():
     assert "矩阵乘法" in prompt
     assert "不得生成与学科或知识点无关的题目" in prompt
     assert "不要禁止必要的公式、表格、示意图或题图" in prompt
+    assert "不得生成七至九年级" in prompt
 
 
 def test_generated_math_text_normalization_removes_inline_latex_commands():
@@ -314,6 +332,19 @@ def test_vision_analysis_endpoint_uses_configured_vision_model(client, monkeypat
     assert log.model == "vision-model"
     assert log.prompt_tokens == 5
     assert log.completion_tokens == 7
+
+
+def test_admin_cannot_use_teaching_vision_analysis_endpoint(client):
+    headers = _role_headers(client, "ai_vision_admin", "admin")
+
+    response = client.post(
+        "/api/ai/vision/analyze",
+        headers=headers,
+        data={"prompt": "Describe this teaching image."},
+        files={"file": ("plot.png", b"\x89PNG\r\n\x1a\nimage-bytes", "image/png")},
+    )
+
+    assert response.status_code == 403
 
 
 def test_generate_text_without_key_raises_when_mock_fallback_disabled(client, monkeypatch):

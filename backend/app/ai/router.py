@@ -83,7 +83,6 @@ def analyze_vision_image(
             "lesson:create",
             "exercise:create",
             "material:upload",
-            "admin:content_manage",
         )
     ),
     db: Session = Depends(get_db),

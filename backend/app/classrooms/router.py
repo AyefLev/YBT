@@ -33,7 +33,7 @@ from app.classrooms.service import (
     update_classroom,
 )
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_permission
+from app.core.deps import require_any_permission, require_permission
 
 router = APIRouter(prefix="/api", tags=["classrooms"])
 
@@ -159,7 +159,9 @@ def create_current_user_classroom(
 
 @router.get("/classrooms", response_model=list[ClassroomRead])
 def list_classrooms(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_any_permission("class:manage", "class:join", "class:view_all", "class:manage_all")
+    ),
     db: Session = Depends(get_db),
 ) -> list[ClassroomRead]:
     return [
@@ -183,7 +185,9 @@ def join_classroom_by_code(
 @router.get("/classrooms/{classroom_id}", response_model=ClassroomRead)
 def get_classroom(
     classroom_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_any_permission("class:manage", "class:join", "class:view_all", "class:manage_all")
+    ),
     db: Session = Depends(get_db),
 ) -> ClassroomRead:
     return classroom_to_read(_classroom_or_404(db, classroom_id, current_user), db)
@@ -219,7 +223,9 @@ def delete_current_user_classroom(
 @router.get("/classrooms/{classroom_id}/students", response_model=list[ClassroomStudentRead])
 def get_classroom_students(
     classroom_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_any_permission("class:manage", "class:view_all", "class:manage_all")
+    ),
     db: Session = Depends(get_db),
 ) -> list[ClassroomStudentRead]:
     classroom = _classroom_or_404(db, classroom_id, current_user)
@@ -259,7 +265,15 @@ def create_classroom_assignment(
 @router.get("/classrooms/{classroom_id}/assignments", response_model=list[AssignmentRead])
 def get_classroom_assignments(
     classroom_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_any_permission(
+            "class:manage",
+            "class:join",
+            "class:view_all",
+            "class:manage_all",
+            "assignment:view_all",
+        )
+    ),
     db: Session = Depends(get_db),
 ) -> list[AssignmentRead]:
     classroom = _classroom_or_404(db, classroom_id, current_user)
@@ -307,7 +321,15 @@ def submit_current_user_assignment(
 @router.get("/assignments/{assignment_id}/submissions", response_model=list[AssignmentSubmissionRead])
 def get_assignment_submissions(
     assignment_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_any_permission(
+            "assignment:grade",
+            "assignment:view_all",
+            "class:manage",
+            "class:view_all",
+            "class:manage_all",
+        )
+    ),
     db: Session = Depends(get_db),
 ) -> list[AssignmentSubmissionRead]:
     assignment = _assignment_or_404(db, assignment_id, current_user)

@@ -12,6 +12,11 @@ LESSON_LABELS = {
     "retrieval_note": "资料引用策略",
 }
 
+POSTGRADUATE_AUDIENCE_REQUIREMENTS = (
+    "所有生成内容必须面向考研备考人群：知识深度、例题难度、讲解节奏、术语使用、"
+    "答题方法和易错点都要符合成人考研课堂，不得生成七至九年级或泛泛科普化内容。"
+)
+
 EXERCISE_LABELS = {
     "title": "标题",
     "subject": "学科",
@@ -37,8 +42,9 @@ def build_lesson_prompt(form: dict, references: list[str] | None = None) -> str:
         "2. 不要使用 Markdown 井号标题或分隔线。\n"
         "3. 用清晰的中文小标题组织：教学目标、重点难点、教学流程、课堂练习、课后建议。\n"
         "4. 内容要完整、可编辑、适合成人考研机构教研场景。\n"
-        "5. 如果提供了课程树上下文，必须围绕对应课程、章节、课次和知识点展开。\n"
-        "6. 如果提供了教师补充提示词或输出格式要求，应优先遵循。\n\n"
+        f"5. {POSTGRADUATE_AUDIENCE_REQUIREMENTS}\n"
+        "6. 如果提供了课程树上下文，必须围绕对应课程、章节、课次和知识点展开。\n"
+        "7. 如果提供了教师补充提示词或输出格式要求，应优先遵循。\n\n"
         f"备课信息：\n{form_text}\n\n"
         f"参考资料：\n{reference_text}"
     )
@@ -65,6 +71,7 @@ def build_exercise_prompt(form: dict, references: list[str] | None = None) -> st
         "11. 如题目需要真实照片、复杂插画或识别已有图片，请在题干中标注“需要图片素材”，并说明图片需求，不要假装已经看到了图片。\n"
         "12. 题目数量必须符合表单要求。\n"
         "13. 如果提供了关联教案、课程树上下文或教师补充提示词，必须优先围绕这些内容出题。\n\n"
+        f"14. {POSTGRADUATE_AUDIENCE_REQUIREMENTS}\n\n"
         f"习题信息：\n{form_text}\n\n"
         f"参考资料：\n{reference_text}"
     )
@@ -75,6 +82,7 @@ def build_review_prompt(task_type: str, content: str) -> str:
         "You are the reviewer in a multi-AI teaching content workflow.\n"
         "Review the generated Chinese teaching content for factual issues, missing structure, "
         "format problems, and compliance concerns.\n"
+        f"Audience rule: {POSTGRADUATE_AUDIENCE_REQUIREMENTS}\n"
         "Return concise Chinese feedback with three sections: Status, Warnings, Suggestions.\n\n"
         f"Task type: {task_type}\n"
         f"Generated content:\n{content}"
@@ -87,6 +95,7 @@ def build_revise_prompt(task_type: str, content: str, review_feedback: str) -> s
         "Revise the generated Chinese teaching content according to the reviewer feedback.\n"
         "Keep the original task type and teaching intent. Output only the revised final content, "
         "without meta commentary about the revision process.\n\n"
+        f"Audience rule: {POSTGRADUATE_AUDIENCE_REQUIREMENTS}\n\n"
         f"Task type: {task_type}\n"
         f"Reviewer feedback:\n{review_feedback}\n\n"
         f"Original content:\n{content}"

@@ -37,24 +37,24 @@ export const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     children: [
       { path: '', component: DashboardPage },
-      { path: 'lesson', component: LessonPage, meta: { permissions: ['lesson:create', 'lesson:view_all'], pageMode: 'generate' } },
-      { path: 'lesson/generate', component: LessonPage, meta: { permissions: ['lesson:create'], pageMode: 'generate' } },
-      { path: 'lesson/records', component: LessonPage, meta: { permissions: ['lesson:create', 'lesson:view_all'], pageMode: 'records' } },
-      { path: 'exercise', component: ExercisePage, meta: { permissions: ['exercise:create', 'exercise:view_all'], pageMode: 'generate' } },
-      { path: 'exercise/generate', component: ExercisePage, meta: { permissions: ['exercise:create'], pageMode: 'generate' } },
-      { path: 'exercise/records', component: ExercisePage, meta: { permissions: ['exercise:create', 'exercise:view_all'], pageMode: 'records' } },
-      { path: 'materials', component: MaterialsPage, meta: { permissions: ['material:upload', 'material:view_all', 'material:view_public'], pageMode: 'library' } },
-      { path: 'materials/upload', component: MaterialsPage, meta: { permissions: ['material:upload'], pageMode: 'upload' } },
-      { path: 'materials/library', component: MaterialsPage, meta: { permissions: ['material:upload', 'material:view_all', 'material:view_public'], pageMode: 'library' } },
-      { path: 'courses', component: CoursesPage, meta: { permissions: ['course:create', 'course:view_all'] } },
-      { path: 'classrooms', component: ClassroomsPage, meta: { permissions: ['class:manage', 'class:join', 'class:view_all'] } },
-      { path: 'questions', component: QuestionBankPage, meta: { permissions: ['exercise:create', 'question:view_all'] } },
-      { path: 'reviews', component: ReviewQueuePage, meta: { permissions: ['review:manage'] } },
-      { path: 'compliance', component: CompliancePage, meta: { permissions: ['lesson:create'] } },
+      { path: 'lesson', component: LessonPage, meta: { permissions: ['lesson:create', 'lesson:view_all'], blockedRoles: ['admin'], pageMode: 'generate' } },
+      { path: 'lesson/generate', component: LessonPage, meta: { permissions: ['lesson:create'], blockedRoles: ['admin'], pageMode: 'generate' } },
+      { path: 'lesson/records', component: LessonPage, meta: { permissions: ['lesson:create', 'lesson:view_all'], blockedRoles: ['admin'], pageMode: 'records' } },
+      { path: 'exercise', component: ExercisePage, meta: { permissions: ['exercise:create', 'exercise:view_all'], blockedRoles: ['admin'], pageMode: 'generate' } },
+      { path: 'exercise/generate', component: ExercisePage, meta: { permissions: ['exercise:create'], blockedRoles: ['admin'], pageMode: 'generate' } },
+      { path: 'exercise/records', component: ExercisePage, meta: { permissions: ['exercise:create', 'exercise:view_all'], blockedRoles: ['admin'], pageMode: 'records' } },
+      { path: 'materials', component: MaterialsPage, meta: { permissions: ['material:upload', 'material:view_all', 'material:view_public'], blockedRoles: ['admin'], pageMode: 'library' } },
+      { path: 'materials/upload', component: MaterialsPage, meta: { permissions: ['material:upload'], blockedRoles: ['admin'], pageMode: 'upload' } },
+      { path: 'materials/library', component: MaterialsPage, meta: { permissions: ['material:upload', 'material:view_all', 'material:view_public'], blockedRoles: ['admin'], pageMode: 'library' } },
+      { path: 'courses', component: CoursesPage, meta: { permissions: ['course:create', 'course:view_all'], blockedRoles: ['admin'] } },
+      { path: 'classrooms', component: ClassroomsPage, meta: { permissions: ['class:manage', 'class:join', 'class:view_all'], blockedRoles: ['admin'] } },
+      { path: 'questions', component: QuestionBankPage, meta: { permissions: ['exercise:create', 'question:view_all'], blockedRoles: ['admin'] } },
+      { path: 'reviews', component: ReviewQueuePage, meta: { permissions: ['review:manage'], blockedRoles: ['admin'] } },
+      { path: 'compliance', component: CompliancePage, meta: { permissions: ['review:manage'], blockedRoles: ['admin'] } },
       { path: 'observability', component: ObservabilityPage, meta: { permissions: ['log:view'], pageMode: 'overview' } },
       { path: 'observability/token', component: ObservabilityPage, meta: { permissions: ['log:view'], pageMode: 'token' } },
       { path: 'health', component: SystemHealthPage, meta: { permissions: ['log:view'] } },
-      { path: 'resources', component: ResourcesPage },
+      { path: 'resources', component: ResourcesPage, meta: { permissions: ['lesson:create', 'exercise:create', 'material:upload', 'material:view_public', 'course:create', 'question:view_all'], blockedRoles: ['admin'] } },
       { path: 'admin', component: AdminPage, meta: { permissions: ['admin:user_manage'], pageMode: 'users' } },
       { path: 'admin/users', component: AdminPage, meta: { permissions: ['admin:user_manage'], pageMode: 'users' } },
       { path: 'admin/api', component: AdminPage, meta: { permissions: ['admin:content_manage'], pageMode: 'api' } },
@@ -103,6 +103,13 @@ export function createAppRouter(history: RouterHistory = createDefaultHistory())
       requiredPermissions.length &&
       !requiredPermissions.some((permission) => auth.user?.permissions.includes(permission))
     ) {
+      return { path: '/dashboard' }
+    }
+    const blockedRoles = to.matched.flatMap((route) => {
+      const roles = route.meta.blockedRoles
+      return Array.isArray(roles) ? roles.map(String) : []
+    })
+    if (blockedRoles.some((role) => auth.user?.roles.includes(role))) {
       return { path: '/dashboard' }
     }
     return undefined

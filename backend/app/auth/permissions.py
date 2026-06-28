@@ -30,16 +30,6 @@ PERMISSION_CODES = [
 
 ROLE_PERMISSIONS = {
     "admin": [
-        "material:upload",
-        "material:publish_public",
-        "material:view_all",
-        "material:manage_all",
-        "course:view_all",
-        "class:view_all",
-        "assignment:view_all",
-        "lesson:view_all",
-        "exercise:view_all",
-        "question:view_all",
         "admin:user_manage",
         "admin:role_manage",
         "admin:content_manage",

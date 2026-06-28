@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.models import User
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_permission
+from app.core.deps import require_any_permission, require_permission
 from app.lessons.models import Lesson, LessonVersion
 from app.lessons.schemas import (
     LessonCreateRequest,
@@ -104,7 +104,7 @@ def create(
 
 @router.get("", response_model=list[LessonRead])
 def list_current_user_lessons(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("lesson:create", "lesson:view_all")),
     db: Session = Depends(get_db),
 ) -> list[LessonRead]:
     return [lesson_to_read(lesson, db) for lesson in list_lessons(db, current_user=current_user)]
@@ -113,7 +113,7 @@ def list_current_user_lessons(
 @router.get("/{lesson_id}", response_model=LessonRead)
 def get_lesson(
     lesson_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("lesson:create", "lesson:view_all")),
     db: Session = Depends(get_db),
 ) -> LessonRead:
     lesson = _owned_lesson_or_404(db, lesson_id, current_user)
@@ -123,7 +123,7 @@ def get_lesson(
 @router.get("/{lesson_id}/versions", response_model=list[LessonVersionRead])
 def get_versions(
     lesson_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("lesson:create", "lesson:view_all")),
     db: Session = Depends(get_db),
 ) -> list[LessonVersionRead]:
     lesson = _owned_lesson_or_404(db, lesson_id, current_user)

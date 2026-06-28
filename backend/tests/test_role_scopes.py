@@ -59,7 +59,7 @@ def _create_classroom(client, headers: dict[str, str], name: str):
     return response.json()
 
 
-def test_admin_can_view_teacher_assets_with_owner_labels_but_cannot_teach_in_them(client):
+def test_admin_is_blocked_from_teaching_business_assets(client):
     teacher_headers = _auth_headers(client, "teacher_scope_owner")
     admin_headers = _role_headers(client, "admin_scope_reader", "admin")
     course = _create_course(client, teacher_headers, "Owner Course")
@@ -81,16 +81,21 @@ def test_admin_can_view_teacher_assets_with_owner_labels_but_cannot_teach_in_the
         headers=admin_headers,
         json={"title": "Admin Should Not Publish"},
     )
+    materials_response = client.get("/api/materials", headers=admin_headers)
+    lessons_response = client.get("/api/lessons", headers=admin_headers)
+    exercises_response = client.get("/api/exercises", headers=admin_headers)
+    questions_response = client.get("/api/questions", headers=admin_headers)
 
-    assert courses_response.status_code == 200
-    course_items = courses_response.json()
-    assert course_items[0]["title"] == "Owner Course"
-    assert course_items[0]["owner_username"] == "teacher_scope_owner"
-    assert classroom_response.status_code == 200
-    assert classroom_response.json()["teacher_username"] == "teacher_scope_owner"
-    assert students_response.status_code == 200
+    _ = course
+    assert courses_response.status_code == 403
+    assert classroom_response.status_code == 403
+    assert students_response.status_code == 403
     assert course_patch_response.status_code == 403
     assert assignment_response.status_code == 403
+    assert materials_response.status_code == 403
+    assert lessons_response.status_code == 403
+    assert exercises_response.status_code == 403
+    assert questions_response.status_code == 403
 
 
 def test_teaching_manager_can_manage_teacher_course_and_classroom(client):

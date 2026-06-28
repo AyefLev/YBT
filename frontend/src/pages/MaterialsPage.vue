@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { api, apiForm } from '../api/client'
@@ -103,9 +103,9 @@ const route = useRoute()
 const title = ref('')
 const subject = ref('')
 const purpose = ref('')
-const resourceScope = ref('personal')
+const resourceScope = ref('')
 const tags = ref('')
-const file = ref<File | null>(null)
+const files = ref<File[]>([])
 const chunkStrategy = ref('fixed')
 const chunkSize = ref(800)
 const chunkOverlap = ref(80)
@@ -130,9 +130,46 @@ const returnTo = ref('')
 const canUploadMaterial = computed(() => auth.user?.permissions.includes('material:upload') ?? false)
 const canPublishPublic = computed(() => auth.user?.permissions.includes('material:publish_public') ?? false)
 const canManageAllMaterials = computed(() => auth.user?.permissions.includes('material:manage_all') ?? false)
+const canReadCourses = computed(() =>
+  Boolean(auth.user?.permissions.some((permission) => ['course:create', 'course:view_all', 'course:manage_all'].includes(permission))),
+)
+const isSystemAdmin = computed(() => auth.user?.roles.includes('admin') ?? false)
+const isTeachingManager = computed(() => auth.user?.roles.includes('teaching_manager') ?? false)
 const pageMode = computed(() => String(route.meta.pageMode || 'library'))
-const showUploadPage = computed(() => canUploadMaterial.value && pageMode.value === 'upload')
+const showUploadPage = computed(() => canUploadMaterial.value && !isSystemAdmin.value && pageMode.value === 'upload')
 const showLibraryPage = computed(() => pageMode.value === 'library')
+const scopeOptions = computed(() => {
+  if (isTeachingManager.value && canPublishPublic.value) {
+    return [
+      {
+        value: 'public',
+        label: '机构资源',
+        hint: '机构资源可被授权教师在生成教案和习题时引用。',
+      },
+      {
+        value: 'personal',
+        label: '个人暂存',
+        hint: '仅自己可见，适合未整理或待审核资料。',
+      },
+    ]
+  }
+  if (canPublishPublic.value) {
+    return [
+      { value: 'personal', label: '个人资源', hint: '仅自己可见，可绑定课程、章节、课次或知识点。' },
+      { value: 'public', label: '公共资源', hint: '发布后可被其他授权用户检索和引用。' },
+    ]
+  }
+  return [
+    { value: 'personal', label: '个人资源', hint: '仅自己可见，可绑定课程、章节、课次或知识点。' },
+  ]
+})
+const activeScopeOption = computed(() => scopeOptions.value.find((option) => option.value === resourceScope.value))
+const selectedFileNames = computed(() => files.value.map((item) => item.name).join('；'))
+const scopeDefaultKey = computed(() => `${auth.user?.id ?? 0}:${isTeachingManager.value}:${canPublishPublic.value}`)
+const uploadIntro = computed(() => {
+  if (isTeachingManager.value) return '上传机构或课程组资料，并绑定课程、章节、课次或知识点。'
+  return '上传个人教学资料，并绑定课程、章节、课次或知识点。'
+})
 const availableSessions = computed(() => {
   if (!selectedCourse.value) return []
   return selectedCourse.value.chapters
@@ -148,9 +185,15 @@ const availableKnowledgePoints = computed(() => {
   })
 })
 
-function setFile(event: Event) {
+watch(scopeDefaultKey, () => {
+  resourceScope.value = scopeOptions.value[0]?.value ?? 'personal'
+}, {
+  immediate: true,
+})
+
+function setFiles(event: Event) {
   const input = event.target as HTMLInputElement
-  file.value = input.files?.[0] ?? null
+  files.value = Array.from(input.files ?? [])
 }
 
 function ids(): number[] {
@@ -174,9 +217,16 @@ function statusLabel(status: string): string {
 function scopeLabel(scope: string): string {
   const labels: Record<string, string> = {
     personal: '个人资源',
-    public: '公共资源',
+    public: '机构/公共资源',
   }
   return labels[scope] ?? scope
+}
+
+function fileTitle(file: File): string {
+  const baseTitle = title.value.trim()
+  if (files.value.length <= 1) return baseTitle
+  const fileBaseName = file.name.replace(/\.[^.]+$/, '')
+  return `${baseTitle} - ${fileBaseName}`
 }
 
 function chunkStrategyLabel(strategy: string): string {
@@ -206,6 +256,10 @@ async function loadMaterials() {
 }
 
 async function loadCourses() {
+  if (!canReadCourses.value) {
+    courses.value = []
+    return
+  }
   try {
     courses.value = await api<Course[]>('/api/courses')
   } catch (err) {
@@ -265,8 +319,8 @@ function selectSession() {
 }
 
 async function uploadMaterial() {
-  if (!file.value) {
-    setError(new Error('请选择要上传的文件'), '上传失败')
+  if (!files.value.length) {
+    setError(new Error('请选择要上传的文件，可一次选择多份资料'), '上传失败')
     return
   }
 
@@ -274,23 +328,26 @@ async function uploadMaterial() {
   error.value = ''
   notice.value = ''
   try {
-    const form = new FormData()
-    form.set('title', title.value)
-    form.set('subject', subject.value)
-    form.set('purpose', purpose.value)
-    form.set('resource_scope', resourceScope.value)
-    form.set('tags', tags.value)
-    form.set('file', file.value)
-    form.set('chunk_strategy', chunkStrategy.value)
-    form.set('chunk_size', String(chunkSize.value))
-    form.set('chunk_overlap', String(chunkOverlap.value))
-    if (courseId.value) form.set('course_id', String(courseId.value))
-    if (chapterId.value) form.set('chapter_id', String(chapterId.value))
-    if (sessionId.value) form.set('session_id', String(sessionId.value))
-    if (knowledgePointId.value) form.set('knowledge_point_id', String(knowledgePointId.value))
-    const uploaded = await apiForm<MaterialRead>('/api/materials/upload', form)
-    materialIds.value = String(uploaded.id)
-    notice.value = `材料 ${uploaded.id} 已上传，状态：${statusLabel(uploaded.parse_status)}。`
+    const uploadedItems: MaterialRead[] = []
+    for (const currentFile of files.value) {
+      const form = new FormData()
+      form.set('title', fileTitle(currentFile))
+      form.set('subject', subject.value)
+      form.set('purpose', purpose.value)
+      form.set('resource_scope', resourceScope.value)
+      form.set('tags', tags.value)
+      form.set('file', currentFile)
+      form.set('chunk_strategy', chunkStrategy.value)
+      form.set('chunk_size', String(chunkSize.value))
+      form.set('chunk_overlap', String(chunkOverlap.value))
+      if (courseId.value) form.set('course_id', String(courseId.value))
+      if (chapterId.value) form.set('chapter_id', String(chapterId.value))
+      if (sessionId.value) form.set('session_id', String(sessionId.value))
+      if (knowledgePointId.value) form.set('knowledge_point_id', String(knowledgePointId.value))
+      uploadedItems.push(await apiForm<MaterialRead>('/api/materials/upload', form))
+    }
+    materialIds.value = uploadedItems.map((item) => item.id).join(',')
+    notice.value = `已上传 ${uploadedItems.length} 份材料：${uploadedItems.map((item) => `${item.id}（${statusLabel(item.parse_status)}）`).join('、')}。`
     await loadMaterials()
   } catch (err) {
     setError(err, '材料上传失败')
@@ -406,7 +463,7 @@ onMounted(async () => {
       <div>
         <p class="eyebrow">资料库</p>
         <h1>{{ pageMode === 'upload' ? '上传资料' : (canUploadMaterial ? '教学资料库' : '公共资料库') }}</h1>
-        <p>{{ pageMode === 'upload' ? '上传教材、讲义或课件，并设置课程归属、切片方式和资源域。' : (canUploadMaterial ? '查看资料解析状态、预览内容，并检索相关片段。' : '查看机构公开资料，预览资料片段并按问题检索相关内容。') }}</p>
+        <p>{{ pageMode === 'upload' ? uploadIntro : (canUploadMaterial ? '查看资料解析状态、预览内容，并检索相关片段。' : '查看机构公开资料，预览资料片段并按问题检索相关内容。') }}</p>
       </div>
     </header>
 
@@ -431,12 +488,14 @@ onMounted(async () => {
           用途
           <input v-model.trim="purpose" placeholder="例如：备课、习题、讲义" />
         </label>
-        <label v-if="canPublishPublic">
+        <label>
           资源域
           <select v-model="resourceScope">
-            <option value="personal">个人资源</option>
-            <option value="public">公共资源</option>
+            <option v-for="option in scopeOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
           </select>
+          <small class="field-hint">{{ activeScopeOption?.hint }}</small>
         </label>
         <label>
           标签
@@ -500,10 +559,13 @@ onMounted(async () => {
         </div>
         <label>
           文件
-          <input type="file" accept=".txt,.md,.pdf,.docx,.pptx" required @change="setFile" />
+          <input type="file" accept=".txt,.md,.pdf,.docx,.pptx" multiple required @change="setFiles" />
+          <small v-if="files.length" class="field-hint">
+            已选择 {{ files.length }} 份：{{ selectedFileNames }}
+          </small>
         </label>
         <button class="btn-primary" type="submit" :disabled="loading === 'upload'">
-          {{ loading === 'upload' ? '上传中...' : '上传材料' }}
+          {{ loading === 'upload' ? '上传中...' : (files.length > 1 ? '上传全部材料' : '上传材料') }}
         </button>
       </form>
 
@@ -653,6 +715,14 @@ p {
 .status-detail {
   color: #475569;
   font-size: 0.9rem;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .scope-grid {

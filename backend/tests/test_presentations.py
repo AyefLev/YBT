@@ -110,6 +110,8 @@ def test_generate_lesson_presentation_returns_slides_and_downloadable_pptx(clien
     assert captured["authorization"] == "Bearer generate-key"
     assert "slide_count=2" in str(captured["prompt"])
     assert "Focus on a concise visual explanation of derivatives." in str(captured["prompt"])
+    assert "postgraduate entrance exam lesson" in str(captured["prompt"])
+    assert "面向考研备考人群" in str(captured["prompt"])
 
     download_response = client.get(body["download_url"], headers=headers)
 

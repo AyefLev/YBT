@@ -61,6 +61,9 @@ async function parseResponse(response: Response): Promise<unknown> {
 }
 
 function errorMessage(response: Response, body: unknown): string {
+  if (response.status === 413) {
+    return '上传文件过大，请压缩文件或联系管理员调整上传上限。'
+  }
   if (body && typeof body === 'object' && 'detail' in body) {
     const detail = (body as { detail: unknown }).detail
     return typeof detail === 'string' ? detail : JSON.stringify(detail)

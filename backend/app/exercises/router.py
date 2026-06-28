@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.models import User
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_permission
+from app.core.deps import require_any_permission, require_permission
 from app.exercises.models import Exercise, ExerciseVersion
 from app.exercises.schemas import (
     ExerciseCreateRequest,
@@ -106,7 +106,7 @@ def create(
 
 @router.get("", response_model=list[ExerciseRead])
 def list_current_user_exercises(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("exercise:create", "exercise:view_all")),
     db: Session = Depends(get_db),
 ) -> list[ExerciseRead]:
     return [
@@ -118,7 +118,7 @@ def list_current_user_exercises(
 @router.get("/{exercise_id}", response_model=ExerciseRead)
 def get_exercise(
     exercise_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("exercise:create", "exercise:view_all")),
     db: Session = Depends(get_db),
 ) -> ExerciseRead:
     exercise = _owned_exercise_or_404(db, exercise_id, current_user)
@@ -128,7 +128,7 @@ def get_exercise(
 @router.get("/{exercise_id}/versions", response_model=list[ExerciseVersionRead])
 def get_versions(
     exercise_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("exercise:create", "exercise:view_all")),
     db: Session = Depends(get_db),
 ) -> list[ExerciseVersionRead]:
     exercise = _owned_exercise_or_404(db, exercise_id, current_user)

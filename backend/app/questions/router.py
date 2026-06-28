@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.models import User
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_permission
+from app.core.deps import require_any_permission, require_permission
 from app.questions.models import QuestionBankItem
 from app.questions.schemas import (
     QuestionCreateRequest,
@@ -44,7 +44,7 @@ def list_current_questions(
     subject: str | None = None,
     difficulty: str | None = None,
     status: str | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("exercise:create", "question:view_all")),
     db: Session = Depends(get_db),
 ) -> list[QuestionRead]:
     return [
@@ -74,7 +74,7 @@ def create_current_question(
 @router.get("/{question_id}", response_model=QuestionRead)
 def get_question(
     question_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("exercise:create", "question:view_all")),
     db: Session = Depends(get_db),
 ) -> QuestionRead:
     return question_to_read(question_or_404(db, question_id, current_user), db=db)

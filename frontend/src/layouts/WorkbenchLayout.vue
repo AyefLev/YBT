@@ -34,7 +34,11 @@ function hasAnyPermission(...permissions: string[]): boolean {
   return permissions.some((permission) => hasPermission(permission))
 }
 
-const navGroups = computed(() => buildWorkbenchNavigation({ hasPermission, hasAnyPermission }))
+function hasRole(role: string): boolean {
+  return auth.user?.roles.includes(role) ?? false
+}
+
+const navGroups = computed(() => buildWorkbenchNavigation({ hasPermission, hasAnyPermission, hasRole }))
 
 async function logout() {
   auth.logout()
@@ -76,7 +80,8 @@ function navGlyph(label: string): string {
     练习题: '题',
     资料课程: '资',
     班级教学: '班',
-    审核运维: '审',
+    教研审核: '审',
+    系统运维: '运',
     系统管理: '管',
     资源库: '库',
   }

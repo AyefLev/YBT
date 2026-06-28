@@ -106,6 +106,8 @@ def test_bootstrap_admin_env_creates_admin_user_with_management_access(monkeypat
     assert me_response.status_code == 200
     assert "admin" in me_response.json()["roles"]
     assert "admin:user_manage" in me_response.json()["permissions"]
+    assert "lesson:view_all" not in me_response.json()["permissions"]
+    assert "material:upload" not in me_response.json()["permissions"]
     assert roles_response.status_code == 200
     assert logs_response.status_code == 200
 

@@ -35,8 +35,6 @@ describe('router auth guard', () => {
   })
 
   test('registers protected workbench child routes under dashboard', async () => {
-    sessionStorage.setItem(TOKEN_KEY, 'valid-token')
-    stubCurrentUser()
     const router = createAppRouter(createMemoryHistory())
 
     const dashboardRoutes = router.getRoutes().filter((route) => route.path === '/dashboard')
@@ -66,14 +64,66 @@ describe('router auth guard', () => {
       '/dashboard/admin/users',
       '/dashboard/admin/api',
     ]) {
-      await router.push(path)
-      expect(router.currentRoute.value.path).toBe(path)
-      expect(router.currentRoute.value.matched.length).toBeGreaterThan(0)
+      expect(router.resolve(path).matched.length).toBeGreaterThan(0)
     }
+  })
+
+  test('blocks system admins from teaching routes even with stale teaching permissions', async () => {
+    sessionStorage.setItem(TOKEN_KEY, 'valid-token')
+    stubCurrentUser({
+      roles: ['admin'],
+      permissions: [
+        'lesson:create',
+        'exercise:create',
+        'material:upload',
+        'course:create',
+        'class:manage',
+        'review:manage',
+        'log:view',
+        'admin:user_manage',
+        'admin:content_manage',
+      ],
+    })
+    const router = createAppRouter(createMemoryHistory())
+
+    await router.push('/dashboard/materials/upload')
+
+    expect(router.currentRoute.value.path).toBe('/dashboard')
+  })
+
+  test('allows system admins to access platform management routes', async () => {
+    sessionStorage.setItem(TOKEN_KEY, 'valid-token')
+    stubCurrentUser({
+      roles: ['admin'],
+      permissions: ['log:view', 'admin:user_manage', 'admin:content_manage'],
+    })
+    const router = createAppRouter(createMemoryHistory())
+
+    await router.push('/dashboard/admin/api')
+
+    expect(router.currentRoute.value.path).toBe('/dashboard/admin/api')
+  })
+
+  test('blocks teachers from compliance review routes', async () => {
+    sessionStorage.setItem(TOKEN_KEY, 'valid-token')
+    stubCurrentUser({
+      roles: ['teacher'],
+      permissions: ['lesson:create', 'exercise:create', 'material:upload'],
+    })
+    const router = createAppRouter(createMemoryHistory())
+
+    await router.push('/dashboard/compliance')
+
+    expect(router.currentRoute.value.path).toBe('/dashboard')
   })
 })
 
-function stubCurrentUser() {
+function stubCurrentUser(
+  overrides: Partial<{
+    roles: string[]
+    permissions: string[]
+  }> = {},
+) {
   vi.stubGlobal(
     'fetch',
     vi.fn().mockResolvedValue(
@@ -88,26 +138,8 @@ function stubCurrentUser() {
         review_note: '',
         reviewed_by_id: null,
         reviewed_at: null,
-        roles: ['admin'],
-        permissions: [
-          'lesson:create',
-          'lesson:view_all',
-          'exercise:create',
-          'exercise:view_all',
-          'material:upload',
-          'material:view_all',
-          'material:view_public',
-          'course:create',
-          'course:view_all',
-          'class:manage',
-          'class:join',
-          'class:view_all',
-          'question:view_all',
-          'review:manage',
-          'log:view',
-          'admin:user_manage',
-          'admin:content_manage',
-        ],
+        roles: overrides.roles ?? ['teacher'],
+        permissions: overrides.permissions ?? ['lesson:create', 'exercise:create', 'material:upload'],
       }),
     ),
   )

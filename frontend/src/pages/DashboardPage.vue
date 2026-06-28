@@ -34,25 +34,52 @@ const riskyCount = computed(
     lessons.value.filter((item) => item.compliance_level !== 'low').length +
     exercises.value.filter((item) => item.compliance_level !== 'low').length,
 )
-const canCreateLessons = computed(() => auth.user?.permissions.includes('lesson:create') ?? false)
-const canCreateExercises = computed(() => auth.user?.permissions.includes('exercise:create') ?? false)
+const isSystemAdmin = computed(() => auth.user?.roles.includes('admin') ?? false)
+const isTeachingManager = computed(() => auth.user?.roles.includes('teaching_manager') ?? false)
+const canCreateLessons = computed(() => !isSystemAdmin.value && (auth.user?.permissions.includes('lesson:create') ?? false))
+const canCreateExercises = computed(() => !isSystemAdmin.value && (auth.user?.permissions.includes('exercise:create') ?? false))
 const canViewLessons = computed(() =>
-  Boolean(auth.user?.permissions.some((permission) => ['lesson:create', 'lesson:view_all'].includes(permission))),
+  !isSystemAdmin.value && Boolean(auth.user?.permissions.some((permission) => ['lesson:create', 'lesson:view_all'].includes(permission))),
 )
 const canViewExercises = computed(() =>
-  Boolean(auth.user?.permissions.some((permission) => ['exercise:create', 'exercise:view_all'].includes(permission))),
+  !isSystemAdmin.value && Boolean(auth.user?.permissions.some((permission) => ['exercise:create', 'exercise:view_all'].includes(permission))),
 )
+const heroCopy = computed(() => {
+  if (isSystemAdmin.value) {
+    return {
+      eyebrow: '系统运维',
+      title: '平台管理工作台',
+      description: '集中查看模型配置、用户权限、运行状态、Token 与费用，保持平台服务稳定可控。',
+    }
+  }
+  if (isTeachingManager.value) {
+    return {
+      eyebrow: '机构教研',
+      title: '机构教研管理工作台',
+      description: '围绕课程体系、资料资产、教案习题、班级教学和教研审核组织机构级教学工作。',
+    }
+  }
+  return {
+    eyebrow: '工作台',
+    title: '教研工作台',
+    description: '围绕课程、章节、知识库和 AI 生成链路组织教学内容，让教案、习题和资料都能被快速定位。',
+  }
+})
 const recentLessons = computed(() => lessons.value.slice(0, 5))
 const recentExercises = computed(() => exercises.value.slice(0, 5))
 const quickLinks = computed(() =>
   [
+    { label: '运行总览', description: '查看模型调用、任务执行和平台运行趋势', to: '/dashboard/observability', show: hasAnyPermission('log:view') },
+    { label: 'Token 与费用', description: '跟踪模型调用消耗和费用走势', to: '/dashboard/observability/token', show: hasAnyPermission('log:view') },
+    { label: '系统检查', description: '检查模型、向量库和核心依赖状态', to: '/dashboard/health', show: hasAnyPermission('log:view') },
+    { label: '用户管理', description: '管理账号、角色和审批状态', to: '/dashboard/admin/users', show: hasAnyPermission('admin:user_manage') },
+    { label: 'API 管理', description: '配置模型供应商、密钥和启用状态', to: '/dashboard/admin/api', show: hasAnyPermission('admin:content_manage') },
     { label: '班级与作业', description: '进入班级、作业发布和批改流程', to: '/dashboard/classrooms', show: hasAnyPermission('class:join', 'class:manage', 'class:view_all') },
     { label: '资料库', description: '管理课程材料、章节资料和公共知识', to: '/dashboard/materials/library', show: hasAnyPermission('material:view_public', 'material:upload', 'material:view_all') },
     { label: '课程体系', description: '维护课程、章节、课次和知识点', to: '/dashboard/courses', show: hasAnyPermission('course:create', 'course:view_all') },
     { label: '题库管理', description: '沉淀可复用题目和答案解析', to: '/dashboard/questions', show: hasAnyPermission('exercise:create', 'question:view_all') },
     { label: '教研审核', description: '处理教案、习题和内容复核', to: '/dashboard/reviews', show: hasAnyPermission('review:manage') },
-    { label: '系统检查', description: '查看模型、向量库和运行状态', to: '/dashboard/health', show: hasAnyPermission('log:view') },
-  ].filter((item) => item.show),
+  ].filter((item) => item.show && (!isSystemAdmin.value || item.to.startsWith('/dashboard/admin') || item.to.startsWith('/dashboard/observability') || item.to === '/dashboard/health')),
 )
 
 function hasAnyPermission(...permissions: string[]): boolean {
@@ -101,9 +128,9 @@ onMounted(loadDashboard)
   <section class="page-shell dashboard-shell">
     <header class="page-hero dashboard-hero">
       <div>
-        <p class="eyebrow">工作台</p>
-        <h1>教研工作台</h1>
-        <p>围绕课程、章节、知识库和 AI 生成链路组织教学内容，让教案、习题、资料和审核状态都能被快速定位。</p>
+        <p class="eyebrow">{{ heroCopy.eyebrow }}</p>
+        <h1>{{ heroCopy.title }}</h1>
+        <p>{{ heroCopy.description }}</p>
       </div>
       <div class="hero-actions">
         <RouterLink v-if="canCreateLessons" class="btn-primary" to="/dashboard/lesson/generate">生成教案</RouterLink>

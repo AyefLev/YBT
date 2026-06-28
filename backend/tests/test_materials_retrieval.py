@@ -207,7 +207,7 @@ def test_public_and_personal_material_domains_are_enforced(client):
     assert private_material["id"] not in result_ids
 
     assert manager_delete_private_response.status_code == 403
-    assert admin_delete_private_response.status_code == 204
+    assert admin_delete_private_response.status_code == 403
 
 
 def test_retrieval_search_uses_user_scoped_cache(client):

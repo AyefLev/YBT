@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.models import User
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import require_any_permission
 from app.retrieval.schemas import RetrievalSearchRequest, RetrievalSearchResponse
 from app.retrieval.service import search_chunks_cached
 
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/retrieval", tags=["retrieval"])
 @router.post("/search", response_model=RetrievalSearchResponse)
 def search_materials(
     payload: RetrievalSearchRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("material:upload", "material:view_all", "material:view_public")),
     db: Session = Depends(get_db),
 ) -> RetrievalSearchResponse:
     _ = current_user

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.models import User
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_permission
+from app.core.deps import require_any_permission, require_permission
 from app.courses.models import Chapter, Course, KnowledgePoint, LessonSession
 from app.courses.schemas import (
     ChapterCreateRequest,
@@ -136,7 +136,7 @@ def create_current_user_course(
 
 @router.get("/courses", response_model=list[CourseRead])
 def list_current_user_courses(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("course:create", "course:view_all", "course:manage_all")),
     db: Session = Depends(get_db),
 ) -> list[CourseRead]:
     return [course_to_read(course, db) for course in list_courses(db, current_user=current_user)]
@@ -145,7 +145,7 @@ def list_current_user_courses(
 @router.get("/courses/{course_id}", response_model=CourseDetailRead)
 def get_course_detail(
     course_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("course:create", "course:view_all", "course:manage_all")),
     db: Session = Depends(get_db),
 ) -> CourseDetailRead:
     course = get_owned_course(
@@ -165,7 +165,7 @@ def get_course_detail(
 @router.get("/courses/{course_id}/assets", response_model=CourseAssetsRead)
 def get_course_assets(
     course_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_any_permission("course:create", "course:view_all", "course:manage_all")),
     db: Session = Depends(get_db),
 ) -> CourseAssetsRead:
     course = _course_or_404(db, course_id, current_user)
