@@ -45,6 +45,8 @@ const modelApiKeys = ref<Record<string, string>>({})
 const loading = ref('')
 const error = ref('')
 const notice = ref('')
+const userSearch = ref('')
+const editingUserId = ref<number | null>(null)
 
 const username = ref('')
 const email = ref('')
@@ -54,6 +56,23 @@ const selectedRoles = ref('student')
 const pageMode = computed(() => String(route.meta.pageMode || 'users'))
 const showUsersPage = computed(() => pageMode.value === 'users')
 const showApiPage = computed(() => pageMode.value === 'api')
+const filteredUsers = computed(() => {
+  const keyword = userSearch.value.trim().toLowerCase()
+  if (!keyword) return users.value
+  return users.value.filter((user) =>
+    [
+      user.display_name,
+      user.username,
+      user.email,
+      user.requested_role,
+      user.account_status,
+      ...user.roles,
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(keyword),
+  )
+})
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback
@@ -64,6 +83,26 @@ function roleText(user: AdminUser): string {
   return user.roles.join(' / ') || '未分配'
 }
 
+function roleLabel(role: string): string {
+  const labels: Record<string, string> = {
+    admin: '管理员',
+    teaching_manager: '教研管理员',
+    teacher: '教师',
+    student: '学生',
+    pending_teacher: '待审核教师',
+    operator: '运维',
+  }
+  return labels[role] ?? role
+}
+
+function roleClass(role: string): string {
+  if (role === 'admin') return 'admin'
+  if (role === 'teaching_manager') return 'manager'
+  if (role === 'teacher' || role === 'pending_teacher') return 'teacher'
+  if (role === 'student') return 'student'
+  return ''
+}
+
 function statusText(status: string): string {
   const labels: Record<string, string> = {
     approved: '已通过',
@@ -71,6 +110,30 @@ function statusText(status: string): string {
     rejected: '已拒绝',
   }
   return labels[status] ?? status
+}
+
+function userInitial(user: AdminUser): string {
+  const value = user.display_name || user.username || user.email
+  return value.slice(0, 1).toUpperCase()
+}
+
+function toggleRoleEditor(user: AdminUser) {
+  editingUserId.value = editingUserId.value === user.id ? null : user.id
+}
+
+function toggleRoleAssignment(user: AdminUser, roleName: string, checked: boolean) {
+  const current = new Set(user.roles)
+  if (checked) {
+    current.add(roleName)
+  } else {
+    current.delete(roleName)
+  }
+  user.roles = Array.from(current)
+}
+
+function toggleRoleAssignmentFromEvent(user: AdminUser, roleName: string, event: Event) {
+  const input = event.target as HTMLInputElement
+  toggleRoleAssignment(user, roleName, input.checked)
 }
 
 function roleList(): string[] {
@@ -206,6 +269,7 @@ async function saveRoles(user: AdminUser) {
       body: JSON.stringify({ roles: user.roles }),
     })
     notice.value = '角色已保存。'
+    editingUserId.value = null
     await loadAdminData()
   } catch (err) {
     setError(err, '保存角色失败')
@@ -413,36 +477,105 @@ onMounted(loadAdminData)
     <section v-if="showUsersPage" class="panel stack">
       <div class="panel-title">
         <h2>用户数据库</h2>
-        <small>{{ users.length }} 个账号</small>
+        <small>{{ filteredUsers.length }} / {{ users.length }} 个账号</small>
       </div>
-      <p v-if="!users.length" class="empty-state">暂无用户。</p>
-      <ul v-else class="clean-list">
-        <li v-for="user in users" :key="user.id">
-          <div class="user-row">
-            <div>
-              <strong>{{ user.display_name }}</strong>
-              <small>
-                {{ user.username }} · {{ user.email }} · {{ roleText(user) }}
-                <span class="status-pill" :class="user.account_status">{{ statusText(user.account_status) }}</span>
-                <span class="status-pill" :class="user.is_active ? 'success' : 'danger'">
-                  {{ user.is_active ? '启用' : '停用' }}
-                </span>
-              </small>
-            </div>
-            <div class="role-editor">
-              <select v-model="user.roles" multiple>
-                <option v-for="role in roles" :key="role.id" :value="role.name">
-                  {{ role.name }}
-                </option>
-              </select>
-              <button type="button" class="btn-secondary" @click="saveRoles(user)">保存角色</button>
-              <button type="button" class="btn-danger" @click="toggleActive(user)">
-                {{ user.is_active ? '停用' : '启用' }}
-              </button>
-            </div>
-          </div>
-        </li>
-      </ul>
+      <div class="user-toolbar">
+        <label>
+          搜索用户
+          <input v-model.trim="userSearch" placeholder="用户名、邮箱、角色或状态" />
+        </label>
+      </div>
+      <p v-if="!filteredUsers.length" class="empty-state">暂无匹配用户。</p>
+      <div v-else class="user-table-wrap">
+        <table class="user-table">
+          <thead>
+            <tr>
+              <th>用户</th>
+              <th>ID</th>
+              <th>角色</th>
+              <th>账号状态</th>
+              <th>申请类型</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="user in filteredUsers" :key="user.id">
+              <tr>
+                <td>
+                  <div class="user-identity">
+                    <span class="user-avatar">{{ userInitial(user) }}</span>
+                    <div>
+                      <strong>{{ user.display_name }}</strong>
+                      <small>{{ user.username }} · {{ user.email }}</small>
+                    </div>
+                  </div>
+                </td>
+                <td>{{ user.id }}</td>
+                <td>
+                  <div class="role-pills" :title="roleText(user)">
+                    <span v-for="role in user.roles" :key="role" class="role-pill" :class="roleClass(role)">
+                      {{ roleLabel(role) }}
+                    </span>
+                    <span v-if="!user.roles.length" class="role-pill">未分配</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="status-cell">
+                    <span class="status-dot" :class="{ off: !user.is_active }" />
+                    <span>{{ user.is_active ? '启用' : '停用' }}</span>
+                    <span class="status-pill" :class="user.account_status">{{ statusText(user.account_status) }}</span>
+                  </div>
+                </td>
+                <td>{{ roleLabel(user.requested_role) }}</td>
+                <td>
+                  <div class="user-actions">
+                    <button type="button" class="btn-secondary compact-button" @click="toggleRoleEditor(user)">
+                      {{ editingUserId === user.id ? '收起' : '角色' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="compact-button"
+                      :class="user.is_active ? 'btn-danger' : 'btn-secondary'"
+                      @click="toggleActive(user)"
+                    >
+                      {{ user.is_active ? '停用' : '启用' }}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="editingUserId === user.id" class="role-edit-row">
+                <td colspan="6">
+                  <div class="inline-role-editor">
+                    <div>
+                      <strong>编辑角色</strong>
+                      <small>{{ user.username }} 当前角色：{{ roleText(user) }}</small>
+                    </div>
+                    <div class="role-checkbox-grid">
+                      <label v-for="role in roles" :key="role.id" class="role-checkbox">
+                        <input
+                          type="checkbox"
+                          :checked="user.roles.includes(role.name)"
+                          @change="toggleRoleAssignmentFromEvent(user, role.name, $event)"
+                        />
+                        <span>{{ roleLabel(role.name) }}</span>
+                        <small>{{ role.name }}</small>
+                      </label>
+                    </div>
+                    <div class="inline-role-actions">
+                      <button type="button" class="btn-primary" :disabled="loading === `roles-${user.id}`" @click="saveRoles(user)">
+                        {{ loading === `roles-${user.id}` ? '保存中...' : '保存角色' }}
+                      </button>
+                      <button type="button" class="btn-secondary" @click="editingUserId = null">
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
     </section>
   </section>
 </template>
@@ -471,6 +604,183 @@ onMounted(loadAdminData)
 
 .role-editor select {
   min-height: 76px;
+}
+
+.user-toolbar {
+  display: grid;
+  max-width: 360px;
+}
+
+.user-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.user-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  background: #ffffff;
+}
+
+.user-table th,
+.user-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.user-table th {
+  color: var(--muted);
+  background: var(--surface-soft);
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.user-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.user-identity {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.user-avatar {
+  display: inline-grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--brand-ink);
+  background: var(--brand-soft);
+  font-weight: 900;
+}
+
+.user-identity div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.user-identity strong,
+.user-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-pills,
+.status-cell,
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.role-pill {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: #334155;
+  background: #e2e8f0;
+  font-size: 0.78rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.role-pill.admin {
+  color: #5b21b6;
+  background: #ede9fe;
+}
+
+.role-pill.manager {
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.role-pill.teacher {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.role-pill.student {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.status-dot.off {
+  background: #ef4444;
+}
+
+.compact-button {
+  min-height: 34px;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.role-edit-row td {
+  background: var(--surface-soft);
+}
+
+.inline-role-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.inline-role-editor > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.role-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.role-checkbox {
+  display: grid;
+  grid-template-columns: auto minmax(0, 0.45fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+}
+
+.role-checkbox input {
+  width: auto;
+}
+
+.role-checkbox span,
+.role-checkbox small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-role-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .model-config-list {
@@ -527,6 +837,10 @@ onMounted(loadAdminData)
     display: grid;
     grid-template-columns: 1fr;
     min-width: 0;
+  }
+
+  .role-checkbox-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
