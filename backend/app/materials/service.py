@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 from time import perf_counter
@@ -17,7 +18,7 @@ from app.core.config import get_settings
 from app.core.database import get_session_local
 from app.courses.models import Chapter, Course, KnowledgePoint, LessonSession
 from app.logs.models import JobLog
-from app.materials.models import Material, MaterialChunk
+from app.materials.models import Material, MaterialChunk, MaterialParseCache
 from app.materials.parsers import MaterialNeedsVisionError, SUPPORTED_SUFFIXES, ParsedText, parse_material
 from app.materials.schemas import MaterialParseStatusRead
 from app.materials.vision import render_pdf_pages_for_vision
@@ -31,6 +32,7 @@ from app.tasks.queue import enqueue_task
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 80
 CHUNK_STRATEGIES = {"fixed", "paragraph", "parent_child"}
+PARSE_CACHE_VERSION = "v2"
 _PARSE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="material-parser")
 
 
@@ -170,25 +172,56 @@ def parse_material_job(material_id: int) -> None:
         db.flush()
 
         try:
-            try:
-                parsed_texts = parse_material(Path(material.file_path), material.file_type)
-            except MaterialNeedsVisionError as exc:
-                parsed_texts = _parse_pdf_with_vision(
-                    db,
-                    material=material,
-                    reason=str(exc),
+            file_sha256 = _file_sha256(Path(material.file_path))
+            cached_texts = _load_parse_cache(
+                db,
+                file_sha256=file_sha256,
+                file_type=material.file_type,
+            )
+            if cached_texts is not None:
+                parsed_texts = cached_texts
+                job_log.detail = "Reused cached OCR/text extraction result"
+                write_material_parse_status_cache(
+                    material_id=material.id,
+                    status="parsing",
+                    detail=job_log.detail,
+                    phase="cache",
+                    current_page=len(parsed_texts),
+                    total_pages=len(parsed_texts),
+                    percent=100,
                 )
+            else:
+                try:
+                    parsed_texts = parse_material(Path(material.file_path), material.file_type)
+                except MaterialNeedsVisionError as exc:
+                    parsed_texts = _parse_pdf_with_vision(
+                        db,
+                        material=material,
+                        reason=str(exc),
+                    )
+                if parsed_texts:
+                    _store_parse_cache(
+                        db,
+                        file_sha256=file_sha256,
+                        file_type=material.file_type,
+                        parsed_texts=parsed_texts,
+                    )
             _replace_chunks(db, material=material, parsed_texts=parsed_texts)
             chunk_count = len(material.chunks)
             should_index_vectors = chunk_count > 0
             material.parse_status = "parsed" if chunk_count else "empty"
             material.parse_error = None
             job_log.status = "succeeded"
-            job_log.detail = f"Parsed {chunk_count} chunks"
+            if job_log.detail != "Reused cached OCR/text extraction result":
+                job_log.detail = f"Parsed {chunk_count} chunks"
             write_material_parse_status_cache(
                 material_id=material.id,
                 status=material.parse_status,
                 detail=job_log.detail,
+                phase="cache" if cached_texts is not None else "chunk",
+                current_page=len(parsed_texts),
+                total_pages=len(parsed_texts),
+                percent=100,
             )
         except VisionMaterialParseUnavailable as exc:
             material.parse_status = "needs_vision"
@@ -276,8 +309,19 @@ def _parse_pdf_with_vision(
 ) -> list[ParsedText]:
     if material.file_type != ".pdf":
         raise VisionMaterialParseUnavailable(reason)
+    settings = get_settings()
+    max_pages = max(1, settings.vision_pdf_max_pages)
+    write_material_parse_status_cache(
+        material_id=material.id,
+        status="parsing",
+        detail=f"Rendering PDF pages for vision OCR, max_pages={max_pages}",
+        phase="render",
+        current_page=0,
+        total_pages=None,
+        percent=0,
+    )
     try:
-        rendered_pages = render_pdf_pages_for_vision(Path(material.file_path))
+        rendered_pages = render_pdf_pages_for_vision(Path(material.file_path), max_pages=max_pages)
     except Exception as exc:
         raise VisionMaterialParseUnavailable(
             f"{reason} 当前无法渲染 PDF 页面或视觉解析依赖不可用，请启用视觉模型解析后重新解析。"
@@ -287,7 +331,17 @@ def _parse_pdf_with_vision(
         raise VisionMaterialParseUnavailable(f"{reason} 未能渲染出可供视觉模型识别的页面。")
 
     parsed: list[ParsedText] = []
-    for page in rendered_pages:
+    total_pages = len(rendered_pages)
+    for index, page in enumerate(rendered_pages, start=1):
+        write_material_parse_status_cache(
+            material_id=material.id,
+            status="parsing",
+            detail=f"Vision OCR page {index}/{total_pages}",
+            phase="ocr",
+            current_page=index,
+            total_pages=total_pages,
+            percent=round(index * 100 / max(total_pages, 1)),
+        )
         try:
             result = analyze_image(
                 db,
@@ -411,6 +465,10 @@ def material_parse_status(material: Material) -> MaterialParseStatusRead:
                 detail=str(payload.get("detail") or ""),
                 error_message=payload.get("error_message") or None,
                 cache_hit=True,
+                phase=str(payload.get("phase") or ""),
+                current_page=_optional_int(payload.get("current_page")),
+                total_pages=_optional_int(payload.get("total_pages")),
+                percent=_optional_int(payload.get("percent")),
             )
 
     return MaterialParseStatusRead(
@@ -428,6 +486,10 @@ def write_material_parse_status_cache(
     status: str,
     detail: str,
     error_message: str | None = None,
+    phase: str = "",
+    current_page: int | None = None,
+    total_pages: int | None = None,
+    percent: int | None = None,
 ) -> None:
     get_cache().set(
         _material_parse_status_cache_key(material_id),
@@ -437,6 +499,10 @@ def write_material_parse_status_cache(
                 "status": status,
                 "detail": detail,
                 "error_message": error_message or "",
+                "phase": phase,
+                "current_page": current_page,
+                "total_pages": total_pages,
+                "percent": percent,
             },
             ensure_ascii=False,
         ),
@@ -446,6 +512,106 @@ def write_material_parse_status_cache(
 
 def _material_parse_status_cache_key(material_id: int) -> str:
     return f"material:{material_id}:parse_status"
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_parse_cache(
+    db: Session,
+    *,
+    file_sha256: str,
+    file_type: str,
+) -> list[ParsedText] | None:
+    cache = db.scalar(
+        select(MaterialParseCache)
+        .where(
+            MaterialParseCache.file_sha256 == file_sha256,
+            MaterialParseCache.file_type == file_type,
+            MaterialParseCache.parser_version == PARSE_CACHE_VERSION,
+        )
+        .order_by(MaterialParseCache.id.desc())
+    )
+    if cache is None:
+        return None
+    try:
+        payload = json.loads(cache.parsed_texts_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, list):
+        return None
+    parsed: list[ParsedText] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        parsed.append(
+            ParsedText(
+                content=content,
+                page_no=_optional_int(item.get("page_no")),
+                slide_no=_optional_int(item.get("slide_no")),
+            )
+        )
+    return parsed if parsed else None
+
+
+def _store_parse_cache(
+    db: Session,
+    *,
+    file_sha256: str,
+    file_type: str,
+    parsed_texts: list[ParsedText],
+) -> None:
+    if not parsed_texts:
+        return
+    existing = db.scalar(
+        select(MaterialParseCache).where(
+            MaterialParseCache.file_sha256 == file_sha256,
+            MaterialParseCache.file_type == file_type,
+            MaterialParseCache.parser_version == PARSE_CACHE_VERSION,
+        )
+    )
+    payload = json.dumps(
+        [
+            {
+                "content": item.content,
+                "page_no": item.page_no,
+                "slide_no": item.slide_no,
+            }
+            for item in parsed_texts
+            if item.content.strip()
+        ],
+        ensure_ascii=False,
+    )
+    if existing is not None:
+        existing.parsed_texts_json = payload
+        db.flush()
+        return
+    db.add(
+        MaterialParseCache(
+            file_sha256=file_sha256,
+            file_type=file_type,
+            parser_version=PARSE_CACHE_VERSION,
+            parsed_texts_json=payload,
+        )
+    )
+    db.flush()
 
 
 def _replace_chunks(

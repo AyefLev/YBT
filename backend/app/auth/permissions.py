@@ -36,10 +36,8 @@ ROLE_PERMISSIONS = {
         "log:view",
     ],
     "teaching_manager": [
-        "lesson:create",
         "lesson:view_all",
         "lesson:export",
-        "exercise:create",
         "exercise:view_all",
         "material:upload",
         "material:publish_public",

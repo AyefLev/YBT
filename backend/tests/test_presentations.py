@@ -135,3 +135,64 @@ def test_generate_lesson_presentation_returns_slides_and_downloadable_pptx(clien
 
 def json_dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def test_generate_lesson_presentation_completes_missing_ai_slides(client, monkeypatch):
+    import httpx
+
+    from app.cache.client import clear_cache_backend
+    from app.core.config import get_settings
+
+    def fake_post(url, *, headers, json, timeout):
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json_dumps(
+                                {
+                                    "slides": [
+                                        {
+                                            "title": "Only AI Slide",
+                                            "bullets": ["The model returned too little."],
+                                            "speaker_notes": "Expand this in backend.",
+                                            "visual_prompt": "One diagram.",
+                                        }
+                                    ]
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 9},
+            },
+        )
+
+    monkeypatch.setenv("LLM_API_KEY", "generate-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://generate.example/v1")
+    monkeypatch.setenv("LLM_MODEL", "generate-model")
+    monkeypatch.setenv("LLM_MOCK_ON_FAILURE", "false")
+    monkeypatch.setattr(httpx, "post", fake_post)
+    get_settings.cache_clear()
+    clear_cache_backend()
+
+    headers = _auth_headers(client, "presentation_missing_slides")
+    lesson_id = _create_lesson(client, headers)
+
+    response = client.post(
+        f"/api/presentations/lesson/{lesson_id}/generate",
+        headers=headers,
+        json={"slide_count": 3, "description": "Complete the deck for classroom use."},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["slides"]) == 3
+    assert body["slides"][0]["title"] == "Only AI Slide"
+    assert all(slide["bullets"] for slide in body["slides"])
+
+    download_response = client.get(body["download_url"], headers=headers)
+    deck = Presentation(BytesIO(download_response.content))
+    assert len(deck.slides) == 3

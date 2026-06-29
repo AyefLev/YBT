@@ -18,6 +18,7 @@ data/*.sqlite
 
 .superpowers/
 .worktrees/
+.tmp/
 .pytest-tmp/
 .pytest_cache/
 .mypy_cache/

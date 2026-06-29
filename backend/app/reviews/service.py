@@ -8,6 +8,7 @@ from app.auth.models import User
 from app.lessons.models import Lesson
 from app.logs.models import OperationLog
 from app.questions.models import QuestionBankItem
+from app.questions.service import decode_list
 from app.reviews.schemas import ReviewableRead
 
 REVIEW_DRAFT_STATUSES = {"draft", "rejected"}
@@ -67,8 +68,11 @@ def list_pending_reviews(db: Session) -> list[ReviewableRead]:
             resource_id=lesson.id,
             title=lesson.title,
             owner_id=lesson.owner_id,
+            owner_name=_owner_name(db, lesson.owner_id),
+            owner_username=_owner_username(db, lesson.owner_id),
             status=lesson.review_status,
             subject=lesson.subject,
+            detail=_lesson_review_detail(lesson),
             created_at=lesson.created_at,
             updated_at=lesson.updated_at,
         )
@@ -80,14 +84,60 @@ def list_pending_reviews(db: Session) -> list[ReviewableRead]:
             resource_id=question.id,
             title=question.title,
             owner_id=question.owner_id,
+            owner_name=_owner_name(db, question.owner_id),
+            owner_username=_owner_username(db, question.owner_id),
             status=question.status,
             subject=question.subject,
+            detail=_question_review_detail(question),
             created_at=question.created_at,
             updated_at=question.updated_at,
         )
         for question in questions
     )
     return sorted(items, key=lambda item: (item.updated_at, item.resource_id), reverse=True)
+
+
+def _owner_name(db: Session, owner_id: int) -> str:
+    owner = db.get(User, owner_id)
+    return owner.display_name if owner else ""
+
+
+def _owner_username(db: Session, owner_id: int) -> str:
+    owner = db.get(User, owner_id)
+    return owner.username if owner else ""
+
+
+def _lesson_review_detail(lesson: Lesson) -> dict[str, object]:
+    return {
+        "content": lesson.current_content,
+        "chapter": lesson.chapter,
+        "stage": lesson.stage,
+        "duration_minutes": lesson.duration_minutes,
+        "student_level": lesson.student_level,
+        "course_id": lesson.course_id,
+        "chapter_id": lesson.chapter_id,
+        "session_id": lesson.session_id,
+        "knowledge_point_id": lesson.knowledge_point_id,
+        "compliance_level": lesson.compliance_level,
+    }
+
+
+def _question_review_detail(question: QuestionBankItem) -> dict[str, object]:
+    return {
+        "stem": question.stem,
+        "options": decode_list(question.options_json),
+        "answer": question.answer,
+        "analysis": question.analysis,
+        "tags": decode_list(question.tags_json),
+        "question_type": question.question_type,
+        "difficulty": question.difficulty,
+        "course_id": question.course_id,
+        "chapter_id": question.chapter_id,
+        "session_id": question.session_id,
+        "knowledge_point_id": question.knowledge_point_id,
+        "source_exercise_id": question.source_exercise_id,
+        "source_material_id": question.source_material_id,
+    }
 
 
 def approve_resource(

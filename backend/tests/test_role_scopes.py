@@ -119,3 +119,81 @@ def test_teaching_manager_can_manage_teacher_course_and_classroom(client):
     assert patch_response.json()["title"] == "Manager Updated Course"
     assert assignment_response.status_code == 201
     assert assignment_response.json()["title"] == "Manager Published Assignment"
+
+
+def test_teaching_manager_reviews_and_overviews_without_teacher_creation_permissions(client):
+    teacher_headers = _auth_headers(client, "teacher_boundary_owner")
+    manager_headers = _role_headers(client, "teaching_manager_boundary", "teaching_manager")
+
+    lesson_create_response = client.post(
+        "/api/lessons",
+        headers=manager_headers,
+        json={
+            "title": "Manager should not create lesson",
+            "subject": "Math",
+            "chapter": "Limits",
+            "stage": "review",
+            "duration_minutes": 45,
+            "student_level": "basic",
+            "content": "Manager overview only.",
+        },
+    )
+    question_create_response = client.post(
+        "/api/questions",
+        headers=manager_headers,
+        json={
+            "title": "Manager should not create question",
+            "subject": "Math",
+            "question_type": "short_answer",
+            "difficulty": "basic",
+            "stem": "Explain the limit definition.",
+        },
+    )
+    exercise_create_response = client.post(
+        "/api/exercises",
+        headers=manager_headers,
+        json={
+            "title": "Manager should not create exercise",
+            "subject": "Math",
+            "knowledge_point": "Limits",
+            "question_type": "short_answer",
+            "difficulty": "basic",
+            "content": "One practice question.",
+        },
+    )
+
+    assert lesson_create_response.status_code == 403
+    assert question_create_response.status_code == 403
+    assert exercise_create_response.status_code == 403
+
+    teacher_lesson = client.post(
+        "/api/lessons",
+        headers=teacher_headers,
+        json={
+            "title": "Teacher owned lesson",
+            "subject": "Math",
+            "chapter": "Limits",
+            "stage": "review",
+            "duration_minutes": 45,
+            "student_level": "basic",
+            "content": "Teacher lesson content.",
+        },
+    )
+    teacher_question = client.post(
+        "/api/questions",
+        headers=teacher_headers,
+        json={
+            "title": "Teacher owned question",
+            "subject": "Math",
+            "question_type": "short_answer",
+            "difficulty": "basic",
+            "stem": "Explain continuity.",
+        },
+    )
+
+    assert teacher_lesson.status_code == 201
+    assert teacher_question.status_code == 201
+    assert client.get("/api/lessons", headers=manager_headers).status_code == 200
+    question_list = client.get("/api/questions", headers=manager_headers)
+    assert question_list.status_code == 200
+    assert any(item["id"] == teacher_question.json()["id"] for item in question_list.json())

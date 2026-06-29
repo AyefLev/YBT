@@ -364,7 +364,7 @@ def test_scanned_pdf_uses_vision_fallback_when_available(client, monkeypatch):
     monkeypatch.setattr(
         material_service,
         "render_pdf_pages_for_vision",
-        lambda _path: [
+        lambda _path, **_kwargs: [
             RenderedPage(
                 page_no=1,
                 image_bytes=b"\x89PNG\r\n\x1a\nrendered-page",
@@ -406,6 +406,70 @@ def test_scanned_pdf_uses_vision_fallback_when_available(client, monkeypatch):
     chunks = chunks_response.json()
     assert chunks[0]["page_no"] == 1
     assert "导数定义" in chunks[0]["content"]
+
+
+def test_duplicate_scanned_pdf_reuses_cached_vision_ocr_and_reports_page_progress(client, monkeypatch):
+    from app.ai.schemas import AIResult
+    from app.core.config import get_settings
+    from app.materials.vision import RenderedPage
+    import app.materials.service as material_service
+
+    headers = _auth_headers(client, username="teacher_scanned_pdf_ocr_cache")
+    analyze_calls: list[int] = []
+    rendered_kwargs: list[dict[str, object]] = []
+
+    def fake_render(path, **kwargs):
+        rendered_kwargs.append(kwargs)
+        return [
+            RenderedPage(page_no=1, image_bytes=b"\x89PNG\r\n\x1a\npage-1", mime_type="image/png"),
+            RenderedPage(page_no=2, image_bytes=b"\x89PNG\r\n\x1a\npage-2", mime_type="image/png"),
+        ]
+
+    def fake_analyze_image(db, *, image_bytes, mime_type, prompt, user_id=None):
+        page_no = 1 if image_bytes.endswith(b"page-1") else 2
+        analyze_calls.append(page_no)
+        return AIResult(
+            content=f"OCR page {page_no} derivative content.",
+            provider="real",
+            model="vision-model",
+            fallback_used=False,
+        )
+
+    monkeypatch.setenv("VISION_PDF_MAX_PAGES", "40")
+    get_settings.cache_clear()
+    monkeypatch.setattr(material_service, "render_pdf_pages_for_vision", fake_render)
+    monkeypatch.setattr(material_service, "analyze_image", fake_analyze_image)
+
+    first = client.post(
+        "/api/materials/upload",
+        headers=headers,
+        data={"title": "Cached OCR First"},
+        files={"file": ("same.pdf", _blank_pdf_bytes(), "application/pdf")},
+    )
+    second = client.post(
+        "/api/materials/upload",
+        headers=headers,
+        data={"title": "Cached OCR Second"},
+        files={"file": ("same.pdf", _blank_pdf_bytes(), "application/pdf")},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["parse_status"] == "parsed"
+    assert second.json()["parse_status"] == "parsed"
+    assert analyze_calls == [1, 2]
+    assert rendered_kwargs[0]["max_pages"] == 40
+
+    status_response = client.get(
+        f"/api/materials/{second.json()['id']}/parse-status",
+        headers=headers,
+    )
+    assert status_response.status_code == 200
+    status_body = status_response.json()
+    assert status_body["detail"] == "Reused cached OCR/text extraction result"
+    assert status_body["phase"] == "cache"
+    assert status_body["current_page"] == 2
+    assert status_body["total_pages"] == 2
 
 
 def test_retrieval_ignores_single_shared_chinese_character(client):

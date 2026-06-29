@@ -52,3 +52,17 @@ class MaterialChunk(Base):
     future_vector_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     future_embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     material: Mapped[Material] = relationship(back_populates="chunks")
+
+
+class MaterialParseCache(Base):
+    __tablename__ = "material_parse_cache"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    file_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    file_type: Mapped[str] = mapped_column(String(16), index=True)
+    parser_version: Mapped[str] = mapped_column(String(32), default="v1", index=True)
+    parsed_texts_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )

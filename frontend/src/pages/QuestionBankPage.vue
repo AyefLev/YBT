@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api, apiBlob, downloadBlobResponse } from '../api/client'
+import MarkdownPreview from '../components/MarkdownPreview.vue'
 import { useAuthStore } from '../stores/auth'
 
 interface Question {
@@ -248,9 +249,17 @@ onMounted(loadQuestions)
               · 所属教师 {{ question.owner_name || question.owner_username || `用户 ${question.owner_id}` }}
               <span class="status-pill" :class="question.status">{{ statusLabel(question.status) }}</span>
             </small>
-            <p>{{ question.stem }}</p>
-            <p v-if="question.options.length" class="muted">{{ question.options.join(' / ') }}</p>
+            <div class="question-preview">
+              <MarkdownPreview :content="question.stem" />
+            </div>
+            <div v-if="question.options.length" class="option-list">
+              <span v-for="option in question.options" :key="option">{{ option }}</span>
+            </div>
             <p><strong>答案：</strong>{{ question.answer || '未设置' }}</p>
+            <details v-if="question.analysis" class="analysis-detail">
+              <summary>Analysis</summary>
+              <MarkdownPreview :content="question.analysis" />
+            </details>
           </div>
           <button
             v-if="canCreateQuestions"
@@ -298,6 +307,39 @@ onMounted(loadQuestions)
 .question-list p {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.question-preview,
+.answer-preview,
+.analysis-detail {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--surface-soft);
+}
+
+.answer-preview {
+  display: grid;
+  gap: 6px;
+}
+
+.option-list {
+  display: grid;
+  gap: 8px;
+}
+
+.option-list span {
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #1e3a8a;
+  background: #eff6ff;
+}
+
+.analysis-detail summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: #1d4ed8;
 }
 
 @media (max-width: 900px) {

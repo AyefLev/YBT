@@ -86,11 +86,16 @@ def test_teacher_submits_question_and_manager_approves(client):
 
     pending = client.get("/api/reviews/pending", headers=manager_headers)
     assert pending.status_code == 200
-    assert any(
-        item["resource_type"] == "question"
-        and item["resource_id"] == question["id"]
+    pending_question = next(
+        item
         for item in pending.json()
+        if item["resource_type"] == "question"
+        and item["resource_id"] == question["id"]
     )
+    assert pending_question["owner_username"] == "teacher_review_question"
+    assert pending_question["detail"]["stem"] == "Explain letter format."
+    assert pending_question["detail"]["answer"] == "Greeting, body, closing."
+    assert pending_question["detail"]["analysis"] == "Basic writing format."
 
     approve = client.post(
         f"/api/reviews/question/{question['id']}/approve",
@@ -163,11 +168,15 @@ def test_teacher_submits_lesson_and_manager_rejects(client):
 
     pending = client.get("/api/reviews/pending", headers=manager_headers)
     assert pending.status_code == 200
-    assert any(
-        item["resource_type"] == "lesson"
-        and item["resource_id"] == lesson["id"]
+    pending_lesson = next(
+        item
         for item in pending.json()
+        if item["resource_type"] == "lesson"
+        and item["resource_id"] == lesson["id"]
     )
+    assert pending_lesson["owner_username"] == "teacher_review_lesson"
+    assert pending_lesson["detail"]["content"] == "Lesson plan content for review."
+    assert pending_lesson["detail"]["duration_minutes"] == 45
 
     reject = client.post(
         f"/api/reviews/lesson/{lesson['id']}/reject",

@@ -31,6 +31,9 @@ AUTO_ADD_PERMISSION_CODES = {
     "question:view_all",
 }
 SYNC_ROLE_PERMISSION_NAMES = {"admin"}
+REMOVE_ROLE_PERMISSION_CODES = {
+    "teaching_manager": {"lesson:create", "exercise:create"},
+}
 
 
 def seed_default_auth_data(db: Session) -> None:
@@ -53,6 +56,13 @@ def seed_default_auth_data(db: Session) -> None:
             if name in SYNC_ROLE_PERMISSION_NAMES:
                 role.permissions = permissions
                 continue
+            removed_codes = REMOVE_ROLE_PERMISSION_CODES.get(name, set())
+            if removed_codes:
+                role.permissions = [
+                    permission
+                    for permission in role.permissions
+                    if permission.code not in removed_codes
+                ]
             current_codes = {permission.code for permission in role.permissions}
             missing_managed_codes = (
                 set(permission_codes) & AUTO_ADD_PERMISSION_CODES

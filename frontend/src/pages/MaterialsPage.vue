@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { api, apiForm } from '../api/client'
+import MarkdownPreview from '../components/MarkdownPreview.vue'
 import { useAuthStore } from '../stores/auth'
 import { parseTeachingContextQuery } from './contextQuery'
 
@@ -47,6 +48,10 @@ interface MaterialParseStatus {
   detail: string
   error_message: string | null
   cache_hit: boolean
+  phase: string
+  current_page: number | null
+  total_pages: number | null
+  percent: number | null
 }
 
 interface RetrievedChunk {
@@ -213,6 +218,16 @@ function statusLabel(status: string): string {
     failed: '解析失败',
   }
   return labels[status] ?? status
+}
+
+function parseProgressText(status: MaterialParseStatus): string {
+  const parts: string[] = []
+  if (status.phase) parts.push(status.phase)
+  if (status.current_page !== null && status.total_pages !== null) {
+    parts.push(`${status.current_page}/${status.total_pages}`)
+  }
+  if (status.percent !== null) parts.push(`${status.percent}%`)
+  return parts.join(' 路 ')
 }
 
 function scopeLabel(scope: string): string {
@@ -622,9 +637,10 @@ onMounted(async () => {
               · 章节 {{ material.chapter_id || '-' }}
               · 课次 {{ material.session_id || '-' }}
               · 知识点 {{ material.knowledge_point_id || '-' }}
-            </p>
+              </p>
             <p v-if="material.parse_error" class="parse-error">{{ material.parse_error }}</p>
             <p v-if="parseStatuses[material.id]" class="status-detail">
+              <span v-if="parseProgressText(parseStatuses[material.id])">{{ parseProgressText(parseStatuses[material.id]) }} | </span>
               状态详情：{{ statusLabel(parseStatuses[material.id].status) }}
               · {{ parseStatuses[material.id].cache_hit ? '缓存命中' : '数据库回退' }}
               <span v-if="parseStatuses[material.id].detail"> · {{ parseStatuses[material.id].detail }}</span>
@@ -645,7 +661,9 @@ onMounted(async () => {
       <ul class="clean-list">
         <li v-for="chunk in selectedChunks" :key="chunk.id">
           <strong>片段 {{ chunk.chunk_index + 1 }}</strong>
-          <p>{{ chunk.content }}</p>
+          <div class="chunk-preview">
+            <MarkdownPreview :content="chunk.content" />
+          </div>
           <small v-if="chunk.page_no || chunk.slide_no">
             {{ chunk.page_no ? `页码 ${chunk.page_no}` : '' }}
             {{ chunk.slide_no ? `幻灯片 ${chunk.slide_no}` : '' }}
@@ -665,7 +683,9 @@ onMounted(async () => {
       <ul v-else class="clean-list">
         <li v-for="chunk in chunks" :key="chunk.id">
           <strong>{{ chunk.source }} · 匹配度 {{ chunk.score.toFixed(2) }}</strong>
-          <p>{{ chunk.content }}</p>
+          <div class="chunk-preview">
+            <MarkdownPreview :content="chunk.content" />
+          </div>
           <small>
             材料 {{ chunk.material_id }}
             {{ chunk.page_no ? ` · 页码 ${chunk.page_no}` : '' }}
@@ -716,6 +736,13 @@ p {
 .status-detail {
   color: #475569;
   font-size: 0.9rem;
+}
+
+.chunk-preview {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
 }
 
 .field-hint {

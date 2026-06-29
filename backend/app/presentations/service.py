@@ -45,6 +45,8 @@ def generate_lesson_presentation_file(
     slides = _parse_slides(provider_status.content, target_count=target_count)
     if not slides:
         slides = _fallback_slides(lesson, target_count=target_count)
+    else:
+        slides = _complete_slides(lesson, slides=slides, target_count=target_count)
 
     file_path = _write_pptx(lesson=lesson, slides=slides)
     try:
@@ -188,6 +190,45 @@ def _fallback_slides(lesson: Lesson, *, target_count: int) -> list[PresentationS
             )
         )
     return slides[:target_count]
+
+
+def _complete_slides(
+    lesson: Lesson,
+    *,
+    slides: list[PresentationSlideRead],
+    target_count: int,
+) -> list[PresentationSlideRead]:
+    completed = [
+        slide.model_copy(update={"slide_no": index})
+        for index, slide in enumerate(slides[:target_count], start=1)
+    ]
+    if len(completed) >= target_count:
+        return completed
+
+    fallback = _fallback_slides(lesson, target_count=target_count)
+    for slide in fallback:
+        if len(completed) >= target_count:
+            break
+        normalized_title = slide.title.strip()
+        if normalized_title and any(existing.title == normalized_title for existing in completed):
+            continue
+        completed.append(slide.model_copy(update={"slide_no": len(completed) + 1}))
+
+    while len(completed) < target_count:
+        completed.append(
+            PresentationSlideRead(
+                slide_no=len(completed) + 1,
+                title=f"Classroom Extension {len(completed) + 1}",
+                bullets=[
+                    "Summarize the current lesson point.",
+                    "Add one worked example or quick check.",
+                    "Reserve time for student questions.",
+                ],
+                speaker_notes="Use this slide as a buffer for classroom pacing.",
+                visual_prompt="Simple board-writing structure with key formula and example.",
+            )
+        )
+    return completed[:target_count]
 
 
 def _write_pptx(*, lesson: Lesson, slides: list[PresentationSlideRead]) -> Path:

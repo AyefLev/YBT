@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     vision_llm_base_url: str = ""
     vision_llm_api_key: str = ""
     vision_llm_model: str = ""
+    vision_pdf_max_pages: int = 50
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     embedding_dimensions: int = DEFAULT_EMBEDDING_DIMENSIONS
     vector_store_provider: str = "disabled"

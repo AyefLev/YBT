@@ -49,3 +49,7 @@ class MaterialParseStatusRead(BaseModel):
     detail: str
     error_message: str | None = None
     cache_hit: bool = False
+    phase: str = ""
+    current_page: int | None = None
+    total_pages: int | None = None
+    percent: int | None = None
