@@ -52,5 +52,10 @@ describe('buildWorkbenchNavigation', () => {
     )
 
     expect(groups.map((group) => group.label)).toEqual(['工作台', '系统运维', '系统管理'])
+    expect(groups.find((group) => group.label === '系统管理')?.children?.map((child) => child.to)).toEqual([
+      '/dashboard/admin/users',
+      '/dashboard/admin/api',
+      '/dashboard/admin/database',
+    ])
   })
 })

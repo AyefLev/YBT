@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import desc, func, select, text
+from sqlalchemy import desc, func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.auth.models import User
@@ -7,9 +7,13 @@ from app.ai.service import _provider_config_for_role
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.deps import require_permission
+from app.demo.seed import seed_demo_data
 from app.logs.models import JobLog, ModelLog, OperationLog
 from app.logs.schemas import (
+    DatabaseManagementRead,
+    DatabaseTableRead,
     DemoHealthRead,
+    DemoSeedResultRead,
     HealthComponentRead,
     JobLogRead,
     LogSummaryRead,
@@ -25,6 +29,37 @@ from app.logs.schemas import (
 from app.retrieval.vector_store import check_vector_store_health
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
+
+
+DATABASE_TABLES = [
+    ("users", "用户", "账号权限", "账号、状态、申请审核信息"),
+    ("roles", "角色", "账号权限", "角色与权限分组"),
+    ("permissions", "权限", "账号权限", "系统权限代码"),
+    ("courses", "课程", "教学组织", "教师或教管创建的课程"),
+    ("chapters", "章节", "教学组织", "课程下的单元/章节"),
+    ("lesson_sessions", "课次", "教学组织", "章节下的课时安排"),
+    ("knowledge_points", "知识点", "教学组织", "与课程、章节、课次关联的知识点"),
+    ("classrooms", "班级", "班级作业", "班级与邀请码"),
+    ("classroom_enrollments", "班级成员", "班级作业", "学生加入班级记录"),
+    ("assignments", "作业", "班级作业", "教师发布给班级的作业"),
+    ("assignment_submissions", "作业提交", "班级作业", "学生提交与批改结果"),
+    ("materials", "资料", "知识库", "公共或个人资料元数据"),
+    ("material_chunks", "资料切片", "知识库", "资料解析后的检索切片"),
+    ("course_material_links", "课程资料关联", "知识库", "课程与资料的关联"),
+    ("lessons", "教案", "内容生产", "生成和保存的教案"),
+    ("lesson_versions", "教案版本", "内容生产", "教案历史版本"),
+    ("session_lesson_links", "课次教案关联", "内容生产", "课次与教案的关联"),
+    ("exercises", "练习", "内容生产", "生成和保存的练习"),
+    ("exercise_versions", "练习版本", "内容生产", "练习历史版本"),
+    ("question_bank_items", "题库", "内容生产", "沉淀的问题答案对"),
+    ("compliance_rules", "合规规则", "审核治理", "内容检查规则"),
+    ("compliance_logs", "合规日志", "审核治理", "内容检查记录"),
+    ("ai_provider_configs", "模型 API 配置", "系统配置", "各功能模型的接口配置"),
+    ("operation_logs", "操作日志", "系统观测", "用户与系统操作记录"),
+    ("model_logs", "模型日志", "系统观测", "模型调用、token 与费用"),
+    ("job_logs", "任务日志", "系统观测", "异步/后台任务记录"),
+    ("export_records", "导出记录", "系统观测", "文档与文件导出记录"),
+]
 
 
 def _database_kind(database_url: str) -> str:
@@ -127,6 +162,30 @@ def _observability_health(db: Session) -> ObservabilityHealthRead:
     )
 
 
+def _database_tables(db: Session) -> list[DatabaseTableRead]:
+    inspector = inspect(db.get_bind())
+    existing_tables = set(inspector.get_table_names())
+    tables: list[DatabaseTableRead] = []
+    for name, label, category, note in DATABASE_TABLES:
+        available = name in existing_tables
+        row_count = 0
+        if available:
+            row_count = int(
+                db.execute(text(f'SELECT COUNT(*) FROM "{name}"')).scalar_one()
+            )
+        tables.append(
+            DatabaseTableRead(
+                name=name,
+                label=label,
+                category=category,
+                row_count=row_count,
+                available=available,
+                note=note,
+            )
+        )
+    return tables
+
+
 def _model_health(db: Session) -> ModelHealthRead:
     settings = get_settings()
     generate_config = _provider_config_for_role(settings, "generate", db=db)
@@ -167,6 +226,43 @@ def _currency_label(db: Session, statement) -> str:
     if not currencies:
         return "CNY"
     return currencies[0] if len(set(currencies)) == 1 else "mixed"
+
+
+@router.get("/database", response_model=DatabaseManagementRead)
+def get_database_management(
+    current_user: User = Depends(require_permission("admin:content_manage")),
+    db: Session = Depends(get_db),
+) -> DatabaseManagementRead:
+    _ = current_user
+    health = _check_database(db)
+    tables = _database_tables(db) if health.status == "healthy" else []
+    total_rows = sum(table.row_count for table in tables if table.available)
+    available_count = sum(1 for table in tables if table.available)
+    return DatabaseManagementRead(
+        status=health.status,
+        kind=health.kind,
+        table_count=len(tables),
+        available_table_count=available_count,
+        total_rows=total_rows,
+        message=health.message,
+        safety_notes=[
+            "当前页面只提供只读统计和幂等演示数据初始化。",
+            "不会执行任意 SQL，也不会提供删除、清空、迁移等高风险入口。",
+            "资料切片删除与向量库同步仍由资料管理流程负责。",
+        ],
+        tables=tables,
+    )
+
+
+@router.post("/demo-seed", response_model=DemoSeedResultRead)
+def seed_demo_database(
+    current_user: User = Depends(require_permission("admin:content_manage")),
+    db: Session = Depends(get_db),
+) -> DemoSeedResultRead:
+    _ = current_user
+    result = seed_demo_data(db)
+    db.commit()
+    return DemoSeedResultRead(message="演示数据已初始化，可重复执行。", **result)
 
 
 @router.get("/summary", response_model=LogSummaryRead)

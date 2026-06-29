@@ -139,6 +139,43 @@ class DemoHealthRead(BaseModel):
     suggested_next_action: str
 
 
+class DatabaseTableRead(BaseModel):
+    name: str
+    label: str
+    category: str
+    row_count: int
+    available: bool
+    note: str = ""
+
+
+class DatabaseManagementRead(BaseModel):
+    status: str
+    kind: str
+    table_count: int
+    available_table_count: int
+    total_rows: int
+    message: str
+    safety_notes: list[str]
+    tables: list[DatabaseTableRead]
+
+
+class DemoSeedResultRead(BaseModel):
+    message: str
+    username: str
+    password: str
+    manager_username: str
+    manager_password: str
+    admin_user_id: int
+    teaching_user_id: int
+    course_id: int
+    chapter_id: int
+    session_id: int
+    knowledge_point_id: int
+    material_id: int
+    exercise_id: int
+    question_id: int
+
+
 class SystemHealthRead(BaseModel):
     overall_status: str
     database: HealthComponentRead

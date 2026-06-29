@@ -63,6 +63,7 @@ describe('router auth guard', () => {
       '/dashboard/admin',
       '/dashboard/admin/users',
       '/dashboard/admin/api',
+      '/dashboard/admin/database',
     ]) {
       expect(router.resolve(path).matched.length).toBeGreaterThan(0)
     }
@@ -99,9 +100,9 @@ describe('router auth guard', () => {
     })
     const router = createAppRouter(createMemoryHistory())
 
-    await router.push('/dashboard/admin/api')
+    await router.push('/dashboard/admin/database')
 
-    expect(router.currentRoute.value.path).toBe('/dashboard/admin/api')
+    expect(router.currentRoute.value.path).toBe('/dashboard/admin/database')
   })
 
   test('blocks teachers from compliance review routes', async () => {

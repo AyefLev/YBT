@@ -86,6 +86,7 @@ export function buildWorkbenchNavigation(access: WorkbenchNavigationAccess): Wor
       children: [
         { label: '用户管理', to: '/dashboard/admin/users', show: hasPermission('admin:user_manage') },
         { label: 'API 管理', to: '/dashboard/admin/api', show: hasPermission('admin:content_manage') },
+        { label: '数据库管理', to: '/dashboard/admin/database', show: hasPermission('admin:content_manage') },
       ],
     },
     {

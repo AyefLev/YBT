@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import { api, apiForm } from '../api/client'
 
@@ -356,15 +357,11 @@ onMounted(loadHealth)
                 </span>
               </dd>
             </div>
-            <div>
-              <dt>多 AI 审核</dt>
-              <dd>{{ health.models.multi_agent_review ? '开启' : '关闭' }}</dd>
-            </div>
-            <div>
-              <dt>Mock 兜底</dt>
-              <dd>{{ health.models.mock_on_failure ? '开启' : '关闭' }}</dd>
-            </div>
           </dl>
+          <p class="strategy-note">
+            生成审核策略：多 AI 审核{{ health.models.multi_agent_review ? '已启用' : '未启用' }}，
+            失败兜底{{ health.models.mock_on_failure ? '已启用' : '未启用' }}。策略开关由后端环境与生成流程控制。
+          </p>
         </section>
       </div>
 
@@ -388,14 +385,16 @@ onMounted(loadHealth)
         </div>
       </section>
 
-      <section class="panel stack">
-        <h2>演示准备项</h2>
-        <div class="ready-grid">
-          <span v-for="item in health.demo.docker_ready_items" :key="item" class="ready-item">
-            {{ item }}
-          </span>
+      <section class="panel demo-entry">
+        <div>
+          <h2>演示数据</h2>
+          <p class="muted">
+            样例账号、课程、知识库、练习和题库初始化已移到数据库管理页，便于答辩时一键准备和查看数据规模。
+          </p>
         </div>
-        <p class="notice">{{ health.demo.suggested_next_action }}</p>
+        <RouterLink class="btn-secondary" to="/dashboard/admin/database">
+          打开数据库管理
+        </RouterLink>
       </section>
       <section class="panel stack">
         <div class="panel-title">
@@ -523,8 +522,17 @@ onMounted(loadHealth)
   overflow-wrap: anywhere;
 }
 
-.connectivity-grid,
-.ready-grid {
+.strategy-note {
+  margin: 0;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  padding: 11px 12px;
+  color: var(--brand-ink);
+  background: var(--brand-soft);
+  line-height: 1.6;
+}
+
+.connectivity-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
@@ -545,18 +553,16 @@ onMounted(loadHealth)
   line-height: 1.5;
 }
 
-.ready-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+.demo-entry {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.ready-item {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 12px;
-  color: var(--brand-dark);
-  background: var(--brand-soft);
-  font-weight: 900;
-  text-align: center;
+.demo-entry p {
+  margin: 8px 0 0;
+  line-height: 1.6;
 }
 
 .test-tabs {
@@ -620,13 +626,16 @@ onMounted(loadHealth)
 @media (max-width: 900px) {
   .health-metrics,
   .connectivity-grid,
-  .ready-grid,
   .vision-test-grid {
     grid-template-columns: 1fr;
   }
 
   .kv-list div {
     grid-template-columns: 1fr;
+  }
+
+  .demo-entry {
+    display: grid;
   }
 }
 </style>

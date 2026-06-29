@@ -13,6 +13,7 @@ import ClassroomsPage from './pages/ClassroomsPage.vue'
 import CompliancePage from './pages/CompliancePage.vue'
 import CoursesPage from './pages/CoursesPage.vue'
 import DashboardPage from './pages/DashboardPage.vue'
+import DatabaseManagementPage from './pages/DatabaseManagementPage.vue'
 import ExercisePage from './pages/ExercisePage.vue'
 import LessonPage from './pages/LessonPage.vue'
 import LoginPage from './pages/LoginPage.vue'
@@ -58,6 +59,7 @@ export const routes: RouteRecordRaw[] = [
       { path: 'admin', component: AdminPage, meta: { permissions: ['admin:user_manage'], pageMode: 'users' } },
       { path: 'admin/users', component: AdminPage, meta: { permissions: ['admin:user_manage'], pageMode: 'users' } },
       { path: 'admin/api', component: AdminPage, meta: { permissions: ['admin:content_manage'], pageMode: 'api' } },
+      { path: 'admin/database', component: DatabaseManagementPage, meta: { permissions: ['admin:content_manage'] } },
     ],
   },
 ]

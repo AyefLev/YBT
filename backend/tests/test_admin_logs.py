@@ -418,3 +418,56 @@ def test_logs_health_reports_demo_readiness_without_exposing_secrets(client):
         "vector-db",
         "observability",
     ]
+
+
+def test_database_management_requires_content_admin_permission(client):
+    headers = _register_and_login(client, "teacher_database_denied")
+
+    read_response = client.get("/api/logs/database", headers=headers)
+    seed_response = client.post("/api/logs/demo-seed", headers=headers)
+
+    assert read_response.status_code == 403
+    assert seed_response.status_code == 403
+
+
+def test_database_management_reports_whitelisted_table_counts(client):
+    headers = _admin_headers(client, "admin_database_reader")
+
+    response = client.get("/api/logs/database", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "healthy"
+    assert body["kind"] == "sqlite"
+    assert body["available_table_count"] == body["table_count"]
+    assert body["total_rows"] >= 1
+    assert any("不会执行任意 SQL" in note for note in body["safety_notes"])
+
+    tables = {table["name"]: table for table in body["tables"]}
+    assert tables["users"]["label"] == "用户"
+    assert tables["users"]["row_count"] >= 1
+    assert tables["materials"]["category"] == "知识库"
+    assert tables["model_logs"]["category"] == "系统观测"
+
+
+def test_demo_seed_endpoint_initializes_idempotent_demo_data(client):
+    headers = _admin_headers(client, "admin_demo_seeder")
+
+    first_response = client.post("/api/logs/demo-seed", headers=headers)
+    second_response = client.post("/api/logs/demo-seed", headers=headers)
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    first = first_response.json()
+    second = second_response.json()
+    assert first["username"] == "demo_admin"
+    assert first["password"] == "Demo123456"
+    assert first["manager_username"] == "demo_manager"
+    assert first["course_id"] == second["course_id"]
+    assert first["question_id"] == second["question_id"]
+
+    database_response = client.get("/api/logs/database", headers=headers)
+    tables = {table["name"]: table for table in database_response.json()["tables"]}
+    assert tables["courses"]["row_count"] >= 1
+    assert tables["material_chunks"]["row_count"] >= 1
+    assert tables["question_bank_items"]["row_count"] >= 1
