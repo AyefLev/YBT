@@ -77,6 +77,51 @@ def test_question_crud_filters_and_options(client):
     assert patch_response.json()["analysis"] == "Updated analysis"
 
 
+def test_question_bulk_create_saves_multiple_drafts(client):
+    headers = _auth_headers(client, "teacher_question_bulk")
+
+    response = client.post(
+        "/api/questions/bulk",
+        headers=headers,
+        json={
+            "questions": [
+                {
+                    "title": "Limit definition",
+                    "subject": "数学",
+                    "question_type": "single_choice",
+                    "difficulty": "basic",
+                    "stem": r"函数 \(f(x)\) 在 \(x=0\) 连续的条件是什么？",
+                    "options": ["A. 左极限存在", "B. 右极限存在", "C. 函数值存在", "D. 极限存在且等于函数值"],
+                    "answer": "D",
+                    "analysis": "连续要求函数极限等于函数值。",
+                    "tags": ["极限", "连续"],
+                },
+                {
+                    "title": "Derivative meaning",
+                    "subject": "数学",
+                    "question_type": "short_answer",
+                    "difficulty": "medium",
+                    "stem": "说明导数的几何意义。",
+                    "answer": "切线斜率",
+                    "analysis": "导数表示曲线在该点切线的斜率。",
+                    "tags": ["导数"],
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    items = response.json()
+    assert len(items) == 2
+    assert [item["status"] for item in items] == ["draft", "draft"]
+    assert items[0]["options"][3].startswith("D.")
+    assert items[1]["answer"] == "切线斜率"
+
+    list_response = client.get("/api/questions?subject=数学", headers=headers)
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 2
+
+
 def test_question_scope_and_delete(client):
     owner_headers = _auth_headers(client, "teacher_question_owner")
     other_headers = _auth_headers(client, "teacher_question_other")

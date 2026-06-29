@@ -32,7 +32,7 @@ AUTO_ADD_PERMISSION_CODES = {
 }
 SYNC_ROLE_PERMISSION_NAMES = {"admin"}
 REMOVE_ROLE_PERMISSION_CODES = {
-    "teaching_manager": {"lesson:create", "exercise:create"},
+    "teaching_manager": {"lesson:create", "exercise:create", "log:view"},
 }
 
 

@@ -36,6 +36,7 @@ const riskyCount = computed(
 )
 const isSystemAdmin = computed(() => auth.user?.roles.includes('admin') ?? false)
 const isTeachingManager = computed(() => auth.user?.roles.includes('teaching_manager') ?? false)
+const canUseSystemOperations = computed(() => !isTeachingManager.value && hasAnyPermission('log:view'))
 const canCreateLessons = computed(() => !isSystemAdmin.value && (auth.user?.permissions.includes('lesson:create') ?? false))
 const canCreateExercises = computed(() => !isSystemAdmin.value && (auth.user?.permissions.includes('exercise:create') ?? false))
 const canViewLessons = computed(() =>
@@ -69,9 +70,9 @@ const recentLessons = computed(() => lessons.value.slice(0, 5))
 const recentExercises = computed(() => exercises.value.slice(0, 5))
 const quickLinks = computed(() =>
   [
-    { label: '运行总览', description: '查看模型调用、任务执行和平台运行趋势', to: '/dashboard/observability', show: hasAnyPermission('log:view') },
-    { label: 'Token 与费用', description: '跟踪模型调用消耗和费用走势', to: '/dashboard/observability/token', show: hasAnyPermission('log:view') },
-    { label: '系统检查', description: '检查模型、向量库和核心依赖状态', to: '/dashboard/health', show: hasAnyPermission('log:view') },
+    { label: '运行总览', description: '查看模型调用、任务执行和平台运行趋势', to: '/dashboard/observability', show: canUseSystemOperations.value },
+    { label: 'Token 与费用', description: '跟踪模型调用消耗和费用走势', to: '/dashboard/observability/token', show: canUseSystemOperations.value },
+    { label: '系统检查', description: '检查模型、向量库和核心依赖状态', to: '/dashboard/health', show: canUseSystemOperations.value },
     { label: '用户管理', description: '管理账号、角色和审批状态', to: '/dashboard/admin/users', show: hasAnyPermission('admin:user_manage') },
     { label: 'API 管理', description: '配置模型供应商、密钥和启用状态', to: '/dashboard/admin/api', show: hasAnyPermission('admin:content_manage') },
     { label: '班级与作业', description: '进入班级、作业发布和批改流程', to: '/dashboard/classrooms', show: hasAnyPermission('class:join', 'class:manage', 'class:view_all') },

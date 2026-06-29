@@ -8,7 +8,6 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from sqlalchemy.orm import Session
 
-from app.ai.formatting import normalize_generated_math_text
 from app.auth.models import User
 from app.core.config import get_settings
 from app.courses.models import Course
@@ -128,13 +127,18 @@ def export_question_package_docx(
         document.add_paragraph(f"学科：{question.subject}")
         document.add_paragraph(f"题型：{question.question_type}")
         document.add_paragraph(f"难度：{question.difficulty}")
-        document.add_paragraph(question.stem)
+        document.add_paragraph("题干：")
+        _add_content(document, question.stem)
         for option in decode_list(question.options_json):
-            document.add_paragraph(option)
+            cleaned_option = _clean_markdown_line(option)
+            if cleaned_option:
+                document.add_paragraph(cleaned_option)
         if question.answer:
-            document.add_paragraph(f"答案：{question.answer}")
+            cleaned_answer = _clean_markdown_line(question.answer)
+            document.add_paragraph(f"答案：{cleaned_answer}")
         if question.analysis:
-            document.add_paragraph(f"解析：{question.analysis}")
+            document.add_paragraph("解析：")
+            _add_content(document, question.analysis)
 
     return _save_document_and_record(
         db,
@@ -341,7 +345,10 @@ def _formula_without_matrices(formula: str) -> str:
 
 
 def _latex_to_readable(value: str) -> str:
-    value = value.strip()
+    value = _collapse_repeated_latex_slashes(value.strip())
+    value = _replace_latex_fractions(value)
+    value = _replace_latex_roots(value)
+    value = _unwrap_latex_text_commands(value)
     replacements = {
         r"\times": "×",
         r"\cdot": "·",
@@ -350,24 +357,123 @@ def _latex_to_readable(value: str) -> str:
         r"\geq": "≥",
         r"\neq": "≠",
         r"\pm": "±",
+        r"\approx": "≈",
+        r"\equiv": "≡",
+        r"\infty": "∞",
+        r"\alpha": "α",
+        r"\beta": "β",
+        r"\gamma": "γ",
+        r"\delta": "δ",
+        r"\epsilon": "ε",
+        r"\theta": "θ",
+        r"\lambda": "λ",
+        r"\mu": "μ",
+        r"\pi": "π",
+        r"\rho": "ρ",
+        r"\sigma": "σ",
+        r"\varphi": "φ",
+        r"\phi": "φ",
+        r"\omega": "ω",
+        r"\sum": "Σ",
+        r"\prod": "Π",
+        r"\int": "∫",
+        r"\lim": "lim",
+        r"\sin": "sin",
+        r"\cos": "cos",
+        r"\tan": "tan",
+        r"\ln": "ln",
+        r"\log": "log",
+        r"\to": "→",
+        r"\rightarrow": "→",
+        r"\leftarrow": "←",
+        r"\forall": "∀",
+        r"\exists": "∃",
+        r"\in": "∈",
         r"\left": "",
         r"\right": "",
+        r"\displaystyle": "",
+        r"\,": " ",
+        r"\;": " ",
+        r"\:": " ",
+        r"\!": "",
     }
     for source, target in replacements.items():
         value = value.replace(source, target)
+    value = re.sub(r"\$\$?([\s\S]*?)\$\$?", r"\1", value)
     value = value.replace(r"\[", "").replace(r"\]", "")
     value = value.replace(r"\(", "").replace(r"\)", "")
+    value = re.sub(r"\\begin\{cases\}", "{ ", value)
+    value = re.sub(r"\\end\{cases\}", " }", value)
     value = re.sub(r"\\begin\{[bpv]?matrix\}", "[", value)
     value = re.sub(r"\\end\{[bpv]?matrix\}", "]", value)
     value = value.replace("\\\\", "; ")
-    value = value.replace("&", "  ")
-    value = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1)/(\2)", value)
+    value = value.replace("&", " ")
+    value = re.sub(r"_\{([^{}]+)\}", r"_\1", value)
+    value = re.sub(r"\^\{([^{}]+)\}", r"^\1", value)
+    value = value.replace(r"\{", "{").replace(r"\}", "}")
+    value = re.sub(r"\\([A-Za-z]+)", r"\1", value)
+    value = value.replace("\\", "")
     value = re.sub(r"\s+", " ", value)
     return value.strip()
 
 
+def _collapse_repeated_latex_slashes(value: str) -> str:
+    return re.sub(r"\\{2,}(?=[A-Za-z()[\]{}])", r"\\", value)
+
+
+def _unwrap_latex_text_commands(value: str) -> str:
+    for command in ("mathrm", "operatorname", "text", "mathbf", "mathit", "mathcal"):
+        value = re.sub(rf"\\{command}\{{([^{{}}]+)\}}", r"\1", value)
+    return value
+
+
+def _replace_latex_roots(value: str) -> str:
+    value = re.sub(r"\\sqrt\[([^{}\[\]]+)\]\{([^{}]+)\}", r"\1√(\2)", value)
+    return re.sub(r"\\sqrt\{([^{}]+)\}", r"√(\1)", value)
+
+
+def _replace_latex_fractions(value: str) -> str:
+    result: list[str] = []
+    index = 0
+    while index < len(value):
+        if value.startswith(r"\frac", index):
+            numerator = _read_braced_group(value, index + len(r"\frac"))
+            if numerator is not None:
+                denominator = _read_braced_group(value, numerator[1])
+                if denominator is not None:
+                    result.append(
+                        f"({_latex_to_readable(numerator[0])})/({_latex_to_readable(denominator[0])})"
+                    )
+                    index = denominator[1]
+                    continue
+        result.append(value[index])
+        index += 1
+    return "".join(result)
+
+
+def _read_braced_group(value: str, start: int) -> tuple[str, int] | None:
+    index = start
+    while index < len(value) and value[index].isspace():
+        index += 1
+    if index >= len(value) or value[index] != "{":
+        return None
+
+    depth = 0
+    content_start = index + 1
+    while index < len(value):
+        char = value[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return value[content_start:index], index + 1
+        index += 1
+    return None
+
+
 def _clean_markdown_line(line: str) -> str:
-    line = normalize_generated_math_text(line).strip()
+    line = line.strip()
     if not line or set(line) <= {"-"}:
         return ""
     line = re.sub(r"^#{1,6}\s*", "", line)
@@ -378,6 +484,7 @@ def _clean_markdown_line(line: str) -> str:
     line = line.replace("[SVG]", "").replace("[/SVG]", "")
     line = line.replace(r"\[", "").replace(r"\]", "")
     line = line.replace(r"\(", "").replace(r"\)", "")
+    line = _latex_to_readable(line)
     return line.strip()
 
 

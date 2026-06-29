@@ -94,6 +94,24 @@ def _create_lesson(client, headers: dict[str, str], **overrides):
     return response.json()
 
 
+def _create_question(client, headers: dict[str, str], **overrides):
+    payload = {
+        "title": "极限练习",
+        "subject": "数学",
+        "question_type": "single_choice",
+        "difficulty": "basic",
+        "stem": r"已知函数 \( f(x)=\frac{\int_{0}^{x}|\sin t|\,dt}{x^{\alpha}} \)，求 \(\alpha\) 的范围。",
+        "options": [r"A. \( [0,2] \)", r"B. \( [1,2] \)", r"C. \( [1,3] \)", r"D. \( [0,3] \)"],
+        "answer": "B",
+        "analysis": r"当 \(x \to 0\) 时，分子约为 \(x^2/2\)，因此需要 \(\alpha \leq 2\)。",
+        "tags": ["极限"],
+    }
+    payload.update(overrides)
+    response = client.post("/api/questions", headers=headers, json=payload)
+    assert response.status_code == 201
+    return response.json()
+
+
 def test_generate_exercise_without_materials_returns_content_status_and_compliance(client):
     headers = _auth_headers(client)
 
@@ -437,6 +455,27 @@ def test_export_docx_cleans_inline_latex_math_commands(client):
     assert "A 为 m × n 矩阵" in text
     assert "(AB)^T = B^TA^T" in text
     assert "tr(X)=Σ_i=1^px_ii" in text
+
+
+def test_export_question_package_cleans_complex_math(client):
+    headers = _auth_headers(client, username="teacher_export_question_math")
+    question = _create_question(client, headers)
+
+    response = client.post(
+        "/api/exports/questions/docx",
+        headers=headers,
+        json={"question_ids": [question["id"]]},
+    )
+
+    _assert_docx_attachment(response)
+    text = _docx_all_text(response)
+    assert r"\frac" not in text
+    assert r"\int" not in text
+    assert r"\alpha" not in text
+    assert r"\leq" not in text
+    assert "∫_0^x|sin t| dt" in text
+    assert "α" in text
+    assert "≤" in text
 
 
 def test_exports_use_distinct_uuid_filenames(client):

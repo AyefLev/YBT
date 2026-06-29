@@ -48,6 +48,10 @@ class QuestionCreateRequest(BaseModel):
         return _normalize_enum(value, DIFFICULTIES, "difficulty")
 
 
+class QuestionBulkCreateRequest(BaseModel):
+    questions: list[QuestionCreateRequest] = Field(min_length=1, max_length=100)
+
+
 class QuestionUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1)
     subject: str | None = Field(default=None, min_length=1)

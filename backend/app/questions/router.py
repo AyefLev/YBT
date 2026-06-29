@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.core.deps import require_any_permission, require_permission
 from app.questions.models import QuestionBankItem
 from app.questions.schemas import (
+    QuestionBulkCreateRequest,
     QuestionCreateRequest,
     QuestionRead,
     QuestionUpdateRequest,
@@ -67,6 +68,21 @@ def create_current_question(
 ) -> QuestionRead:
     question = create_question(db, payload=payload, current_user=current_user)
     response = question_to_read(question, db=db)
+    db.commit()
+    return response
+
+
+@router.post("/bulk", response_model=list[QuestionRead], status_code=status.HTTP_201_CREATED)
+def create_current_questions_bulk(
+    payload: QuestionBulkCreateRequest,
+    current_user: User = Depends(require_permission("exercise:create")),
+    db: Session = Depends(get_db),
+) -> list[QuestionRead]:
+    questions = [
+        create_question(db, payload=question_payload, current_user=current_user)
+        for question_payload in payload.questions
+    ]
+    response = [question_to_read(question, db=db) for question in questions]
     db.commit()
     return response
 

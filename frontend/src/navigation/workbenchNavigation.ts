@@ -27,7 +27,9 @@ interface DraftNavGroup extends WorkbenchNavGroup {
 export function buildWorkbenchNavigation(access: WorkbenchNavigationAccess): WorkbenchNavGroup[] {
   const { hasPermission, hasAnyPermission, hasRole } = access
   const isSystemAdmin = hasRole('admin')
+  const isTeachingManager = hasRole('teaching_manager')
   const canUseTeachingWorkbench = !isSystemAdmin
+  const canUseSystemOperations = hasPermission('log:view') && !isTeachingManager
   const groups: DraftNavGroup[] = [
     { label: '工作台', to: '/dashboard', show: true },
     {
@@ -73,11 +75,11 @@ export function buildWorkbenchNavigation(access: WorkbenchNavigationAccess): Wor
     },
     {
       label: '系统运维',
-      show: hasPermission('log:view'),
+      show: canUseSystemOperations,
       children: [
-        { label: '运行总览', to: '/dashboard/observability', show: hasPermission('log:view') },
-        { label: 'Token 与费用', to: '/dashboard/observability/token', show: hasPermission('log:view') },
-        { label: '系统检查', to: '/dashboard/health', show: hasPermission('log:view') },
+        { label: '运行总览', to: '/dashboard/observability', show: canUseSystemOperations },
+        { label: 'Token 与费用', to: '/dashboard/observability/token', show: canUseSystemOperations },
+        { label: '系统检查', to: '/dashboard/health', show: canUseSystemOperations },
       ],
     },
     {

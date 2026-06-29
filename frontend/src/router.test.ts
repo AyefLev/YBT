@@ -105,6 +105,19 @@ describe('router auth guard', () => {
     expect(router.currentRoute.value.path).toBe('/dashboard/admin/database')
   })
 
+  test('blocks teaching managers from system operations even with stale log permission', async () => {
+    sessionStorage.setItem(TOKEN_KEY, 'valid-token')
+    stubCurrentUser({
+      roles: ['teaching_manager'],
+      permissions: ['course:view_all', 'course:manage_all', 'review:manage', 'log:view'],
+    })
+    const router = createAppRouter(createMemoryHistory())
+
+    await router.push('/dashboard/health')
+
+    expect(router.currentRoute.value.path).toBe('/dashboard')
+  })
+
   test('blocks teachers from compliance review routes', async () => {
     sessionStorage.setItem(TOKEN_KEY, 'valid-token')
     stubCurrentUser({

@@ -58,4 +58,14 @@ describe('buildWorkbenchNavigation', () => {
       '/dashboard/admin/database',
     ])
   })
+
+  it('keeps teaching managers out of system operations even with stale log permission', () => {
+    const groups = buildWorkbenchNavigation(
+      accessFor(['course:view_all', 'course:manage_all', 'review:manage', 'log:view'], ['teaching_manager']),
+    )
+
+    expect(groups.map((group) => group.label)).toContain('资料课程')
+    expect(groups.map((group) => group.label)).toContain('教研审核')
+    expect(groups.map((group) => group.label)).not.toContain('系统运维')
+  })
 })

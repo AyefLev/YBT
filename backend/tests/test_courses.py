@@ -159,6 +159,22 @@ def test_course_patch_and_status_validation(client):
     assert invalid_status_response.status_code == 422
 
 
+def test_course_can_enter_pending_review_status(client):
+    headers = _auth_headers(client, username="teacher_course_pending_review")
+    course_response = _create_course(client, headers, title="Review Course", status="draft")
+    assert course_response.status_code == 201
+    course = course_response.json()
+
+    patch_response = client.patch(
+        f"/api/courses/{course['id']}",
+        headers=headers,
+        json={"status": "pending_review"},
+    )
+
+    assert patch_response.status_code == 200
+    assert patch_response.json()["status"] == "pending_review"
+
+
 def test_course_patch_rejects_null_non_nullable_fields(client):
     headers = _auth_headers(client, username="teacher_course_patch_nulls")
     course_response = _create_course(

@@ -2,14 +2,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
-COURSE_STATUSES = {"draft", "active", "archived"}
+COURSE_STATUSES = {"draft", "pending_review", "active", "archived"}
 KNOWLEDGE_POINT_DIFFICULTIES = {"basic", "medium", "advanced"}
 
 
 def _normalize_status(value: str) -> str:
     normalized = value.strip().lower()
     if normalized not in COURSE_STATUSES:
-        raise ValueError("status must be draft, active, or archived")
+        raise ValueError("status must be draft, pending_review, active, or archived")
     return normalized
 
 

@@ -52,7 +52,6 @@ ROLE_PERMISSIONS = {
         "assignment:view_all",
         "assignment:grade",
         "question:view_all",
-        "log:view",
         "review:manage",
     ],
     "teacher": [

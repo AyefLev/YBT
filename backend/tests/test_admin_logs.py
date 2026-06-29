@@ -227,7 +227,7 @@ def test_admin_user_endpoints_manage_user_roles(client):
     assert update_response.status_code == 200
     updated_user = update_response.json()
     assert updated_user["roles"] == ["teaching_manager"]
-    assert "log:view" in updated_user["permissions"]
+    assert "log:view" not in updated_user["permissions"]
 
     invalid_role_response = client.post(
         f"/api/admin/users/{managed_user['id']}/roles",

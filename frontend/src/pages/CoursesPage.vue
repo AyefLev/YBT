@@ -88,9 +88,41 @@ const sessionCount = computed(() =>
 const canCreateCourses = computed(() => auth.user?.permissions.includes('course:create') ?? false)
 const canManageAllCourses = computed(() => auth.user?.permissions.includes('course:manage_all') ?? false)
 const canExportCourse = computed(() => auth.user?.permissions.includes('lesson:export') ?? false)
+const canUploadMaterials = computed(() => auth.user?.permissions.includes('material:upload') ?? false)
+const canCreateLessons = computed(() => auth.user?.permissions.includes('lesson:create') ?? false)
+const canCreateExercises = computed(() => auth.user?.permissions.includes('exercise:create') ?? false)
+const canManageClasses = computed(() => auth.user?.permissions.includes('class:manage') ?? false)
+const isTeachingManager = computed(() => auth.user?.roles.includes('teaching_manager') ?? false)
 const canManageSelected = computed(() =>
   Boolean(selected.value && (canManageAllCourses.value || selected.value.owner_id === auth.user?.id)),
 )
+const canSubmitSelectedForReview = computed(() =>
+  Boolean(
+    selected.value &&
+      !canManageAllCourses.value &&
+      selected.value.owner_id === auth.user?.id &&
+      selected.value.status === 'draft',
+  ),
+)
+const canReviewSelectedCourse = computed(() =>
+  Boolean(selected.value && canManageAllCourses.value && selected.value.status === 'pending_review'),
+)
+const pageCopy = computed(() => {
+  if (isTeachingManager.value) {
+    return {
+      eyebrow: '课程审核',
+      title: '全机构课程管理',
+      description: '查看教师创建的课程结构，审核课程状态，并维护机构级课程资产。',
+      listTitle: '全部课程',
+    }
+  }
+  return {
+    eyebrow: '课程体系',
+    title: '我的课程结构',
+    description: '维护课程、章节、课次和知识点，形成可复用的教学资产。',
+    listTitle: '课程列表',
+  }
+})
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback
@@ -100,6 +132,7 @@ function setError(err: unknown, fallback: string) {
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
     draft: '草稿',
+    pending_review: '待审核',
     active: '启用',
     archived: '归档',
   }
@@ -214,6 +247,26 @@ async function createCourse() {
   }
 }
 
+async function updateSelectedCourseStatus(status: string, successMessage: string) {
+  if (!selected.value) return
+  loading.value = `status-${status}`
+  error.value = ''
+  notice.value = ''
+  try {
+    const updated = await api<Course>(`/api/courses/${selected.value.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    })
+    notice.value = successMessage
+    await loadCourses()
+    await loadDetail(updated.id)
+  } catch (err) {
+    setError(err, '课程状态更新失败')
+  } finally {
+    loading.value = ''
+  }
+}
+
 async function createChapter() {
   if (!selected.value) return
   loading.value = 'chapter'
@@ -300,9 +353,9 @@ onMounted(loadCourses)
   <section class="page-shell">
     <header class="page-hero">
       <div>
-        <p class="eyebrow">课程体系</p>
-        <h1>机构课程结构</h1>
-        <p>维护课程、章节、课次和知识点，形成可复用的教研资产。</p>
+        <p class="eyebrow">{{ pageCopy.eyebrow }}</p>
+        <h1>{{ pageCopy.title }}</h1>
+        <p>{{ pageCopy.description }}</p>
       </div>
     </header>
 
@@ -320,7 +373,7 @@ onMounted(loadCourses)
       </form>
 
       <section class="panel stack">
-        <h2>课程列表</h2>
+        <h2>{{ pageCopy.listTitle }}</h2>
         <p v-if="!courses.length" class="empty-state">暂无课程。</p>
         <ul v-else class="clean-list">
           <li v-for="course in courses" :key="course.id">
@@ -346,7 +399,36 @@ onMounted(loadCourses)
           </p>
           <p class="muted">{{ selected.description || '暂无课程说明。' }}</p>
         </div>
-        <button v-if="canExportCourse" type="button" class="btn-secondary" @click="exportOutline">导出课程大纲</button>
+        <div class="course-actions">
+          <button
+            v-if="canSubmitSelectedForReview"
+            type="button"
+            class="btn-secondary"
+            :disabled="loading === 'status-pending_review'"
+            @click="updateSelectedCourseStatus('pending_review', '课程已提交给教研主任审核')"
+          >
+            提交审核
+          </button>
+          <button
+            v-if="canReviewSelectedCourse"
+            type="button"
+            class="btn-primary"
+            :disabled="loading === 'status-active'"
+            @click="updateSelectedCourseStatus('active', '课程已审核通过并启用')"
+          >
+            审核通过
+          </button>
+          <button
+            v-if="canReviewSelectedCourse"
+            type="button"
+            class="btn-secondary"
+            :disabled="loading === 'status-draft'"
+            @click="updateSelectedCourseStatus('draft', '课程已退回教师继续完善')"
+          >
+            退回完善
+          </button>
+          <button v-if="canExportCourse" type="button" class="btn-secondary" @click="exportOutline">导出课程大纲</button>
+        </div>
       </div>
 
       <div class="metric-grid">
@@ -447,9 +529,9 @@ onMounted(loadCourses)
                 <div v-for="point in chapter.knowledgePoints" :key="point.id" class="knowledge-item">
                   <span class="knowledge-chip">{{ point.name }} · {{ difficultyLabel(point.difficulty) }}</span>
                   <div class="quick-actions">
-                    <RouterLink :to="{ path: '/dashboard/materials', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, knowledge_point_id: point.id }) }">上传资料</RouterLink>
-                    <RouterLink :to="{ path: '/dashboard/lesson', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, knowledge_point_id: point.id }) }">生成教案</RouterLink>
-                    <RouterLink :to="{ path: '/dashboard/exercise', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, knowledge_point_id: point.id }) }">生成习题</RouterLink>
+                    <RouterLink v-if="canUploadMaterials" :to="{ path: '/dashboard/materials', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, knowledge_point_id: point.id }) }">上传资料</RouterLink>
+                    <RouterLink v-if="canCreateLessons" :to="{ path: '/dashboard/lesson', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, knowledge_point_id: point.id }) }">生成教案</RouterLink>
+                    <RouterLink v-if="canCreateExercises" :to="{ path: '/dashboard/exercise', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, knowledge_point_id: point.id }) }">生成习题</RouterLink>
                   </div>
                   <ul v-if="assetsForPoint(point.id).length" class="asset-list compact">
                     <li v-for="asset in assetsForPoint(point.id)" :key="assetKey(asset)">
@@ -475,10 +557,10 @@ onMounted(loadCourses)
                     <small>{{ session.duration_minutes }} 分钟</small>
                   </div>
                   <div class="quick-actions">
-                    <RouterLink :to="{ path: '/dashboard/materials', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">上传资料</RouterLink>
-                    <RouterLink :to="{ path: '/dashboard/lesson', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">生成教案</RouterLink>
-                    <RouterLink :to="{ path: '/dashboard/exercise', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">生成习题</RouterLink>
-                    <RouterLink :to="{ path: '/dashboard/classrooms', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">发布作业</RouterLink>
+                    <RouterLink v-if="canUploadMaterials" :to="{ path: '/dashboard/materials', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">上传资料</RouterLink>
+                    <RouterLink v-if="canCreateLessons" :to="{ path: '/dashboard/lesson', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">生成教案</RouterLink>
+                    <RouterLink v-if="canCreateExercises" :to="{ path: '/dashboard/exercise', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">生成习题</RouterLink>
+                    <RouterLink v-if="canManageClasses" :to="{ path: '/dashboard/classrooms', query: buildTeachingContextQuery({ course_id: selected.id, chapter_id: chapter.id, session_id: session.id }) }">发布作业</RouterLink>
                   </div>
                   <p v-if="session.teaching_goal">{{ session.teaching_goal }}</p>
                   <div v-if="session.knowledgePoints.length" class="knowledge-stack">
@@ -573,6 +655,13 @@ onMounted(loadCourses)
 .metric-grid strong {
   color: var(--text);
   font-size: 1.7rem;
+}
+
+.course-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .text-link {
