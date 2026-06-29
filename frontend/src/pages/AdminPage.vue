@@ -134,6 +134,28 @@ async function saveModelConfig(config: AIProviderConfig) {
   }
 }
 
+async function saveAndEnableModelConfig(config: AIProviderConfig) {
+  config.enabled = true
+  await saveModelConfig(config)
+}
+
+async function disableModelConfig(config: AIProviderConfig) {
+  config.enabled = false
+  await saveModelConfig(config)
+}
+
+function modelConfigStatusText(config: AIProviderConfig): string {
+  if (config.enabled) return '正在用于系统调用'
+  if (config.api_key_configured || modelApiKeys.value[config.role]) return '已保存但未启用'
+  return '未配置'
+}
+
+function modelConfigStatusClass(config: AIProviderConfig): string {
+  if (config.enabled) return 'success'
+  if (config.api_key_configured || modelApiKeys.value[config.role]) return 'warning'
+  return 'danger'
+}
+
 function modelRoleLabel(role: string): string {
   const labels: Record<string, string> = {
     generate: '生成模型',
@@ -330,16 +352,19 @@ onMounted(loadAdminData)
     <section v-if="showApiPage" class="panel stack">
       <div class="panel-title">
         <h2>模型 API 配置</h2>
-        <small>生成 / 审核 / 修订 / 视觉 / 向量</small>
+        <small>只有“正在用于系统调用”的配置会覆盖 .env；未启用时系统健康检查会显示 .env 中的模型。</small>
       </div>
       <p v-if="!modelConfigs.length" class="empty-state">暂无模型配置。</p>
       <ul v-else class="model-config-list">
         <li v-for="config in modelConfigs" :key="config.role">
-          <div>
+          <div class="model-config-heading">
             <strong>{{ modelRoleLabel(config.role) }}</strong>
+            <span class="status-pill" :class="modelConfigStatusClass(config)">
+              {{ modelConfigStatusText(config) }}
+            </span>
             <small>
               {{ config.api_key_configured ? `密钥：${config.api_key_preview}` : '未配置密钥' }}
-              · {{ config.enabled ? '已启用' : '已停用' }}
+              · {{ config.enabled ? '系统会使用此配置' : '当前会回退到环境变量配置' }}
             </small>
           </div>
           <label>
@@ -366,11 +391,21 @@ onMounted(loadAdminData)
             新 API Key
             <input v-model.trim="modelApiKeys[config.role]" type="password" placeholder="留空则不修改" />
           </label>
-          <label class="checkbox">
+          <label class="checkbox activation-toggle">
             <input v-model="config.enabled" type="checkbox" />
-            启用
+            用于系统调用
           </label>
-          <button type="button" class="btn-secondary" @click="saveModelConfig(config)">保存</button>
+          <div class="model-config-actions">
+            <button type="button" class="btn-primary" @click="saveAndEnableModelConfig(config)">
+              保存并启用
+            </button>
+            <button type="button" class="btn-secondary" @click="saveModelConfig(config)">
+              仅保存
+            </button>
+            <button v-if="config.enabled" type="button" class="btn-danger" @click="disableModelConfig(config)">
+              停用
+            </button>
+          </div>
         </li>
       </ul>
     </section>
@@ -448,16 +483,41 @@ onMounted(loadAdminData)
 
 .model-config-list li {
   display: grid;
-  grid-template-columns: minmax(150px, 0.9fr) repeat(6, minmax(120px, 1fr)) auto auto;
-  gap: 10px;
-  align-items: end;
+  grid-template-columns: minmax(180px, 0.75fr) repeat(3, minmax(150px, 1fr));
+  gap: 12px;
+  align-items: start;
   border-bottom: 1px solid var(--line);
-  padding-bottom: 12px;
+  padding-bottom: 16px;
 }
 
 .model-config-list li:last-child {
   border-bottom: 0;
   padding-bottom: 0;
+}
+
+.model-config-heading {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+}
+
+.model-config-heading .status-pill {
+  justify-self: start;
+}
+
+.activation-toggle {
+  align-self: end;
+  min-height: 42px;
+}
+
+.model-config-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
 }
 
 @media (max-width: 900px) {
