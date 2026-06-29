@@ -20,7 +20,38 @@ interface DatabaseManagement {
   total_rows: number
   message: string
   safety_notes: string[]
+  vector_store: DatabaseVectorStore
   tables: DatabaseTable[]
+}
+
+interface DatabaseVectorStore {
+  provider: string
+  collection: string
+  enabled: boolean
+  status: string
+  message: string
+  points_count: number
+  dimensions: number | null
+  distance: string
+  indexed_chunk_count: number
+  chunk_count: number
+}
+
+interface VectorSearchHit {
+  id: number
+  material_id: number
+  material_title: string
+  content: string
+  score: number
+  page_no: number | null
+  slide_no: number | null
+}
+
+interface VectorSearchResult {
+  query: string
+  retrieval_mode: string
+  cache_hit: boolean
+  hits: VectorSearchHit[]
 }
 
 interface DemoSeedResult {
@@ -42,7 +73,12 @@ const database = ref<DatabaseManagement | null>(null)
 const seedResult = ref<DemoSeedResult | null>(null)
 const loading = ref(false)
 const seeding = ref(false)
+const searching = ref(false)
 const error = ref('')
+const vectorQuery = ref('')
+const vectorLimit = ref(5)
+const vectorSearchResult = ref<VectorSearchResult | null>(null)
+const vectorSearchError = ref('')
 
 const categoryGroups = computed(() => {
   const groups = new Map<string, DatabaseTable[]>()
@@ -78,9 +114,32 @@ async function seedDemoData() {
     seedResult.value = await api<DemoSeedResult>('/api/logs/demo-seed', { method: 'POST' })
     await loadDatabase()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '演示数据初始化失败'
+    error.value = err instanceof Error ? err.message : '基础样例同步失败'
   } finally {
     seeding.value = false
+  }
+}
+
+async function searchVectorStore() {
+  if (!vectorQuery.value.trim()) {
+    vectorSearchError.value = '请输入要检索的内容。'
+    return
+  }
+  searching.value = true
+  vectorSearchError.value = ''
+  vectorSearchResult.value = null
+  try {
+    vectorSearchResult.value = await api<VectorSearchResult>('/api/logs/database/vector-search', {
+      method: 'POST',
+      body: JSON.stringify({
+        query: vectorQuery.value,
+        top_k: vectorLimit.value,
+      }),
+    })
+  } catch (err) {
+    vectorSearchError.value = err instanceof Error ? err.message : '检索失败'
+  } finally {
+    searching.value = false
   }
 }
 
@@ -94,15 +153,25 @@ function statusLabel(status: string): string {
     degraded: '部分异常',
     unhealthy: '不可用',
     unknown: '未知',
+    disabled: '未启用',
   }
   return labels[status] ?? status
 }
 
 function statusClass(status: string): string {
   if (status === 'healthy') return 'success'
-  if (status === 'degraded') return 'warning'
+  if (status === 'degraded' || status === 'disabled') return 'warning'
   if (status === 'unhealthy') return 'danger'
   return ''
+}
+
+function retrievalModeLabel(value: string): string {
+  const labels: Record<string, string> = {
+    vector: '向量检索',
+    lexical: '关键词回退',
+    cache: '缓存命中',
+  }
+  return labels[value] ?? value
 }
 
 onMounted(loadDatabase)
@@ -114,14 +183,11 @@ onMounted(loadDatabase)
       <div>
         <p class="eyebrow">系统管理</p>
         <h1>数据库管理</h1>
-        <p>查看业务表规模、知识库切片和日志数据量，并可一键初始化答辩演示样例。该页面只保留低风险维护动作。</p>
+        <p>查看业务表规模、知识库切片、向量索引和日志数据量。该页面只保留低风险维护动作。</p>
       </div>
       <div class="hero-actions">
         <button type="button" class="btn-secondary" :disabled="loading" @click="loadDatabase">
           {{ loading ? '刷新中...' : '刷新状态' }}
-        </button>
-        <button type="button" class="btn-primary" :disabled="seeding" @click="seedDemoData">
-          {{ seeding ? '初始化中...' : '初始化演示数据' }}
         </button>
       </div>
     </header>
@@ -156,6 +222,11 @@ onMounted(loadDatabase)
           <small>资料 {{ countTable('materials') }} · 切片 {{ countTable('material_chunks') }}</small>
         </article>
         <article class="metric-card">
+          <span>向量索引</span>
+          <strong>{{ database.vector_store.points_count }}</strong>
+          <small>{{ database.vector_store.provider }} · 已标记 {{ database.vector_store.indexed_chunk_count }}</small>
+        </article>
+        <article class="metric-card">
           <span>内容产物</span>
           <strong>{{ contentRows }}</strong>
           <small>教案 / 练习 / 题库</small>
@@ -166,37 +237,95 @@ onMounted(loadDatabase)
         <section class="panel stack">
           <div class="panel-title">
             <h2>低风险维护</h2>
-            <small>适合课堂演示，不触碰破坏性操作</small>
+            <small>不触碰破坏性操作</small>
           </div>
           <ul class="clean-list">
             <li v-for="note in database.safety_notes" :key="note">
               <strong>{{ note }}</strong>
             </li>
           </ul>
+          <details class="maintenance-details">
+            <summary>数据维护</summary>
+            <p class="muted">用于补齐课程、资料、题库和观测日志的基础样例，可重复执行。</p>
+            <button type="button" class="btn-secondary" :disabled="seeding" @click="seedDemoData">
+              {{ seeding ? '处理中...' : '同步基础样例' }}
+            </button>
+            <div v-if="seedResult" class="demo-result">
+              <strong>{{ seedResult.message }}</strong>
+              <small>
+                课程 {{ seedResult.course_id }} · 章节 {{ seedResult.chapter_id }} · 课次 {{ seedResult.session_id }} ·
+                知识点 {{ seedResult.knowledge_point_id }} · 资料 {{ seedResult.material_id }} ·
+                练习 {{ seedResult.exercise_id }} · 题目 {{ seedResult.question_id }}
+              </small>
+            </div>
+          </details>
         </section>
 
         <section class="panel stack">
           <div class="panel-title">
-            <h2>演示数据</h2>
-            <small>按钮可重复执行，数据按固定标题和账号更新</small>
+            <h2>向量数据库</h2>
+            <small>{{ database.vector_store.collection }}</small>
           </div>
-          <p v-if="!seedResult" class="muted">
-            会创建演示管理员、演示教管、课程章节、知识点、资料切片、练习题、题库题目和观测日志。
-          </p>
-          <div v-else class="demo-result">
-            <strong>{{ seedResult.message }}</strong>
-            <div class="demo-accounts">
-              <span>管理员：{{ seedResult.username }} / {{ seedResult.password }}</span>
-              <span>教管：{{ seedResult.manager_username }} / {{ seedResult.manager_password }}</span>
+          <div class="vector-status-grid">
+            <div>
+              <span>状态</span>
+              <strong>
+                <span class="status-pill" :class="statusClass(database.vector_store.status)">
+                  {{ statusLabel(database.vector_store.status) }}
+                </span>
+              </strong>
             </div>
-            <small>
-              课程 {{ seedResult.course_id }} · 章节 {{ seedResult.chapter_id }} · 课次 {{ seedResult.session_id }} ·
-              知识点 {{ seedResult.knowledge_point_id }} · 资料 {{ seedResult.material_id }} ·
-              练习 {{ seedResult.exercise_id }} · 题目 {{ seedResult.question_id }}
-            </small>
+            <div>
+              <span>向量点</span>
+              <strong>{{ database.vector_store.points_count }}</strong>
+            </div>
+            <div>
+              <span>维度</span>
+              <strong>{{ database.vector_store.dimensions ?? '-' }}</strong>
+            </div>
+            <div>
+              <span>切片覆盖</span>
+              <strong>{{ database.vector_store.indexed_chunk_count }} / {{ database.vector_store.chunk_count }}</strong>
+            </div>
           </div>
+          <p class="muted">{{ database.vector_store.message }}</p>
         </section>
       </div>
+
+      <section class="panel stack">
+        <div class="panel-title">
+          <h2>知识库检索</h2>
+          <small>用于验证当前向量库与回退检索链路</small>
+        </div>
+        <div class="vector-search-form">
+          <label>
+            检索内容
+            <input v-model.trim="vectorQuery" placeholder="例如：矩阵乘法、导数定义、课堂练习" @keyup.enter="searchVectorStore" />
+          </label>
+          <label>
+            返回条数
+            <input v-model.number="vectorLimit" type="number" min="1" max="20" />
+          </label>
+          <button type="button" class="btn-primary" :disabled="searching" @click="searchVectorStore">
+            {{ searching ? '检索中...' : '检索' }}
+          </button>
+        </div>
+        <p v-if="vectorSearchError" class="alert" role="alert">{{ vectorSearchError }}</p>
+        <div v-if="vectorSearchResult" class="search-results">
+          <div class="search-summary">
+            <strong>{{ retrievalModeLabel(vectorSearchResult.retrieval_mode) }}</strong>
+            <small>{{ vectorSearchResult.cache_hit ? '来自缓存' : '实时查询' }} · {{ vectorSearchResult.hits.length }} 条结果</small>
+          </div>
+          <p v-if="!vectorSearchResult.hits.length" class="empty-state">没有匹配的知识库切片。</p>
+          <article v-for="hit in vectorSearchResult.hits" :key="hit.id" class="search-hit">
+            <div>
+              <strong>{{ hit.material_title }}</strong>
+              <small>资料 {{ hit.material_id }} · 切片 {{ hit.id }} · 相关度 {{ hit.score.toFixed(3) }}</small>
+            </div>
+            <p>{{ hit.content }}</p>
+          </article>
+        </div>
+      </section>
 
       <section class="panel stack">
         <div class="panel-title">
@@ -245,7 +374,7 @@ onMounted(loadDatabase)
 
 <style scoped>
 .database-metrics {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .database-metrics .metric-card strong {
@@ -264,9 +393,90 @@ onMounted(loadDatabase)
   background: var(--brand-soft);
 }
 
-.demo-accounts {
+.maintenance-details {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.maintenance-details summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 900;
+}
+
+.maintenance-details p {
+  margin: 8px 0;
+}
+
+.vector-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.vector-status-grid > div {
   display: grid;
   gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.vector-status-grid span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 820;
+}
+
+.vector-status-grid strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.vector-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.search-results {
+  display: grid;
+  gap: 12px;
+}
+
+.search-summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.search-hit {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.search-hit div {
+  display: grid;
+  gap: 4px;
+}
+
+.search-hit p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.7;
 }
 
 .table-groups {
@@ -336,12 +546,14 @@ td small {
 
 @media (max-width: 1180px) {
   .database-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 720px) {
-  .database-metrics {
+  .database-metrics,
+  .vector-status-grid,
+  .vector-search-form {
     grid-template-columns: 1fr;
   }
 }

@@ -27,6 +27,18 @@ class VectorIndexResult:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class VectorStoreStats:
+    provider: str
+    collection: str
+    enabled: bool
+    status: str
+    message: str
+    points_count: int = 0
+    dimensions: int | None = None
+    distance: str = ""
+
+
 class VectorStoreError(RuntimeError):
     pass
 
@@ -218,6 +230,58 @@ def check_vector_store_health() -> VectorIndexResult:
         collection=settings.qdrant_collection,
         enabled=True,
         message="Qdrant 向量数据库连接正常。",
+    )
+
+
+def inspect_vector_store() -> VectorStoreStats:
+    settings = get_settings()
+    if not is_vector_store_configured(settings):
+        return VectorStoreStats(
+            provider=settings.vector_store_provider,
+            collection=settings.qdrant_collection,
+            enabled=False,
+            status="disabled",
+            message="未配置向量数据库，知识库检索将自动回退关键词检索。",
+            dimensions=settings.embedding_dimensions,
+        )
+
+    try:
+        _ensure_collection(settings)
+        response = _request(
+            "GET",
+            f"/collections/{settings.qdrant_collection}",
+            settings=settings,
+        )
+    except Exception as exc:
+        return VectorStoreStats(
+            provider="qdrant",
+            collection=settings.qdrant_collection,
+            enabled=True,
+            status="degraded",
+            message=f"向量数据库连接异常：{exc}",
+            dimensions=settings.embedding_dimensions,
+        )
+
+    result = response.get("result") or {}
+    config = (result.get("config") or {}).get("params") or {}
+    vectors = config.get("vectors") or {}
+    if isinstance(vectors, dict) and "size" in vectors:
+        dimensions = vectors.get("size")
+        distance = str(vectors.get("distance") or "")
+    else:
+        first_vector = next(iter(vectors.values()), {}) if isinstance(vectors, dict) else {}
+        dimensions = first_vector.get("size") if isinstance(first_vector, dict) else None
+        distance = str(first_vector.get("distance") or "") if isinstance(first_vector, dict) else ""
+
+    return VectorStoreStats(
+        provider="qdrant",
+        collection=settings.qdrant_collection,
+        enabled=True,
+        status="healthy",
+        message="Qdrant 向量数据库连接正常。",
+        points_count=int(result.get("points_count") or result.get("vectors_count") or 0),
+        dimensions=int(dimensions or settings.embedding_dimensions),
+        distance=distance,
     )
 
 

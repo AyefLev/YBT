@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy import desc, func, inspect, select, text
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import desc, func, inspect, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.auth.models import User
@@ -12,6 +14,11 @@ from app.logs.models import JobLog, ModelLog, OperationLog
 from app.logs.schemas import (
     DatabaseManagementRead,
     DatabaseTableRead,
+    DatabaseVectorSearchHitRead,
+    DatabaseVectorSearchRead,
+    DatabaseVectorSearchRequest,
+    DatabaseVectorStoreRead,
+    DailyUsageRead,
     DemoHealthRead,
     DemoSeedResultRead,
     HealthComponentRead,
@@ -26,7 +33,9 @@ from app.logs.schemas import (
     SystemHealthRead,
     TokenUsageRead,
 )
-from app.retrieval.vector_store import check_vector_store_health
+from app.materials.models import MaterialChunk
+from app.retrieval.service import search_chunks_cached
+from app.retrieval.vector_store import check_vector_store_health, inspect_vector_store
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 
@@ -186,6 +195,26 @@ def _database_tables(db: Session) -> list[DatabaseTableRead]:
     return tables
 
 
+def _database_vector_store(db: Session) -> DatabaseVectorStoreRead:
+    stats = inspect_vector_store()
+    chunk_count = db.scalar(select(func.count(MaterialChunk.id))) or 0
+    indexed_chunk_count = db.scalar(
+        select(func.count(MaterialChunk.id)).where(MaterialChunk.future_vector_id.is_not(None))
+    ) or 0
+    return DatabaseVectorStoreRead(
+        provider=stats.provider,
+        collection=stats.collection,
+        enabled=stats.enabled,
+        status=stats.status,
+        message=stats.message,
+        points_count=stats.points_count,
+        dimensions=stats.dimensions,
+        distance=stats.distance,
+        indexed_chunk_count=indexed_chunk_count,
+        chunk_count=chunk_count,
+    )
+
+
 def _model_health(db: Session) -> ModelHealthRead:
     settings = get_settings()
     generate_config = _provider_config_for_role(settings, "generate", db=db)
@@ -228,6 +257,72 @@ def _currency_label(db: Session, statement) -> str:
     return currencies[0] if len(set(currencies)) == 1 else "mixed"
 
 
+def _like(value: str) -> str:
+    return f"%{value.strip()}%"
+
+
+def _daily_usage_rows(db: Session, *, days: int, group_by: str) -> list[DailyUsageRead]:
+    start = datetime.now(timezone.utc) - timedelta(days=days - 1)
+    rows = db.execute(
+        select(ModelLog, User.username, User.display_name)
+        .outerjoin(User, User.id == ModelLog.user_id)
+        .where(ModelLog.created_at >= start)
+        .order_by(ModelLog.created_at)
+    ).all()
+    grouped: dict[tuple[str, str, str, str], dict[str, object]] = {}
+    for log, username, display_name in rows:
+        day = log.created_at.date().isoformat()
+        if group_by == "user":
+            key = str(log.user_id or "system")
+            label = display_name or username or (f"用户 {log.user_id}" if log.user_id else "系统任务")
+        else:
+            role = log.api_role or "default"
+            key = f"{role}:{log.model}"
+            label = f"{_role_label(role)} · {log.model or '未记录模型'}"
+        currency = log.cost_currency or "CNY"
+        bucket_key = (day, key, label, currency)
+        bucket = grouped.setdefault(
+            bucket_key,
+            {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "estimated_cost": 0.0,
+                "call_count": 0,
+            },
+        )
+        bucket["prompt_tokens"] = int(bucket["prompt_tokens"]) + int(log.prompt_tokens or 0)
+        bucket["completion_tokens"] = int(bucket["completion_tokens"]) + int(log.completion_tokens or 0)
+        bucket["estimated_cost"] = float(bucket["estimated_cost"]) + float(log.estimated_cost or 0)
+        bucket["call_count"] = int(bucket["call_count"]) + 1
+
+    return [
+        DailyUsageRead(
+            day=day,
+            group_key=key,
+            group_label=label,
+            prompt_tokens=int(values["prompt_tokens"]),
+            completion_tokens=int(values["completion_tokens"]),
+            total_tokens=int(values["prompt_tokens"]) + int(values["completion_tokens"]),
+            estimated_cost=round(float(values["estimated_cost"]), 6),
+            cost_currency=currency,
+            call_count=int(values["call_count"]),
+        )
+        for (day, key, label, currency), values in sorted(grouped.items())
+    ]
+
+
+def _role_label(role: str) -> str:
+    labels = {
+        "generate": "生成",
+        "review": "复核",
+        "revise": "修订",
+        "vision": "视觉",
+        "embedding": "向量",
+        "default": "默认",
+    }
+    return labels.get(role, role or "默认")
+
+
 @router.get("/database", response_model=DatabaseManagementRead)
 def get_database_management(
     current_user: User = Depends(require_permission("admin:content_manage")),
@@ -246,11 +341,44 @@ def get_database_management(
         total_rows=total_rows,
         message=health.message,
         safety_notes=[
-            "当前页面只提供只读统计和幂等演示数据初始化。",
+            "当前页面只提供只读统计和幂等基础样例同步。",
             "不会执行任意 SQL，也不会提供删除、清空、迁移等高风险入口。",
             "资料切片删除与向量库同步仍由资料管理流程负责。",
         ],
+        vector_store=_database_vector_store(db),
         tables=tables,
+    )
+
+
+@router.post("/database/vector-search", response_model=DatabaseVectorSearchRead)
+def search_database_vectors(
+    payload: DatabaseVectorSearchRequest,
+    current_user: User = Depends(require_permission("admin:content_manage")),
+    db: Session = Depends(get_db),
+) -> DatabaseVectorSearchRead:
+    chunks, cache_hit, retrieval_mode = search_chunks_cached(
+        db,
+        query=payload.query,
+        top_k=payload.top_k,
+        material_ids=payload.material_ids,
+        current_user=current_user,
+    )
+    return DatabaseVectorSearchRead(
+        query=payload.query,
+        retrieval_mode=retrieval_mode,
+        cache_hit=cache_hit,
+        hits=[
+            DatabaseVectorSearchHitRead(
+                id=chunk.id,
+                material_id=chunk.material_id,
+                material_title=chunk.material_title,
+                content=chunk.content,
+                score=chunk.score,
+                page_no=chunk.page_no,
+                slide_no=chunk.slide_no,
+            )
+            for chunk in chunks
+        ],
     )
 
 
@@ -262,7 +390,7 @@ def seed_demo_database(
     _ = current_user
     result = seed_demo_data(db)
     db.commit()
-    return DemoSeedResultRead(message="演示数据已初始化，可重复执行。", **result)
+    return DemoSeedResultRead(message="基础样例数据已同步，可重复执行。", **result)
 
 
 @router.get("/summary", response_model=LogSummaryRead)
@@ -417,6 +545,17 @@ def list_model_usage(
     ]
 
 
+@router.get("/usage-daily", response_model=list[DailyUsageRead])
+def list_daily_usage(
+    group_by: str = Query("model", pattern="^(model|user)$"),
+    days: int = Query(30, ge=1, le=90),
+    current_user: User = Depends(require_permission("log:view")),
+    db: Session = Depends(get_db),
+) -> list[DailyUsageRead]:
+    _ = current_user
+    return _daily_usage_rows(db, days=days, group_by=group_by)
+
+
 @router.get("/health", response_model=SystemHealthRead)
 def get_system_health(
     current_user: User = Depends(require_permission("log:view")),
@@ -451,44 +590,109 @@ def get_system_health(
 
 @router.get("/operations", response_model=list[OperationLogRead])
 def list_operation_logs(
+    q: str | None = Query(None, max_length=200),
+    action: str | None = Query(None, max_length=128),
+    resource: str | None = Query(None, max_length=128),
+    user_id: int | None = Query(None, ge=1),
+    limit: int = Query(100, ge=1, le=300),
     current_user: User = Depends(require_permission("log:view")),
     db: Session = Depends(get_db),
 ) -> list[OperationLog]:
     _ = current_user
+    statement = select(OperationLog)
+    if q:
+        pattern = _like(q)
+        statement = statement.where(
+            or_(
+                OperationLog.action.ilike(pattern),
+                OperationLog.resource.ilike(pattern),
+                OperationLog.detail.ilike(pattern),
+            )
+        )
+    if action:
+        statement = statement.where(OperationLog.action.ilike(_like(action)))
+    if resource:
+        statement = statement.where(OperationLog.resource.ilike(_like(resource)))
+    if user_id:
+        statement = statement.where(OperationLog.user_id == user_id)
     return list(
         db.scalars(
-            select(OperationLog)
-            .order_by(desc(OperationLog.created_at), desc(OperationLog.id))
-            .limit(100)
+            statement.order_by(desc(OperationLog.created_at), desc(OperationLog.id)).limit(limit)
         ).all()
     )
 
 
 @router.get("/models", response_model=list[ModelLogRead])
 def list_model_logs(
+    q: str | None = Query(None, max_length=200),
+    api_role: str | None = Query(None, max_length=32),
+    model: str | None = Query(None, max_length=128),
+    success: bool | None = Query(None),
+    user_id: int | None = Query(None, ge=1),
+    limit: int = Query(100, ge=1, le=300),
     current_user: User = Depends(require_permission("log:view")),
     db: Session = Depends(get_db),
 ) -> list[ModelLog]:
     _ = current_user
+    statement = select(ModelLog)
+    if q:
+        pattern = _like(q)
+        statement = statement.where(
+            or_(
+                ModelLog.task_type.ilike(pattern),
+                ModelLog.provider.ilike(pattern),
+                ModelLog.api_role.ilike(pattern),
+                ModelLog.model.ilike(pattern),
+                ModelLog.error_message.ilike(pattern),
+                ModelLog.status.ilike(pattern),
+            )
+        )
+    if api_role:
+        statement = statement.where(ModelLog.api_role == api_role)
+    if model:
+        statement = statement.where(ModelLog.model.ilike(_like(model)))
+    if success is not None:
+        statement = statement.where(ModelLog.success.is_(success))
+    if user_id:
+        statement = statement.where(ModelLog.user_id == user_id)
     return list(
         db.scalars(
-            select(ModelLog)
-            .order_by(desc(ModelLog.created_at), desc(ModelLog.id))
-            .limit(100)
+            statement.order_by(desc(ModelLog.created_at), desc(ModelLog.id)).limit(limit)
         ).all()
     )
 
 
 @router.get("/jobs", response_model=list[JobLogRead])
 def list_job_logs(
+    q: str | None = Query(None, max_length=200),
+    status: str | None = Query(None, max_length=32),
+    job_type: str | None = Query(None, max_length=64),
+    user_id: int | None = Query(None, ge=1),
+    limit: int = Query(100, ge=1, le=300),
     current_user: User = Depends(require_permission("log:view")),
     db: Session = Depends(get_db),
 ) -> list[JobLog]:
     _ = current_user
+    statement = select(JobLog)
+    if q:
+        pattern = _like(q)
+        statement = statement.where(
+            or_(
+                JobLog.job_type.ilike(pattern),
+                JobLog.status.ilike(pattern),
+                JobLog.resource_type.ilike(pattern),
+                JobLog.detail.ilike(pattern),
+                JobLog.error_message.ilike(pattern),
+            )
+        )
+    if status:
+        statement = statement.where(JobLog.status == status)
+    if job_type:
+        statement = statement.where(JobLog.job_type.ilike(_like(job_type)))
+    if user_id:
+        statement = statement.where(JobLog.user_id == user_id)
     return list(
         db.scalars(
-            select(JobLog)
-            .order_by(desc(JobLog.created_at), desc(JobLog.id))
-            .limit(100)
+            statement.order_by(desc(JobLog.created_at), desc(JobLog.id)).limit(limit)
         ).all()
     )

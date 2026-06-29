@@ -357,6 +357,88 @@ def test_logs_summary_reports_model_and_job_observability_metrics(client):
     assert body["recent_errors"][0]["message"] == "timeout"
 
 
+def test_logs_filters_and_daily_usage_reports_grouped_usage(client):
+    from app.core.database import get_session_local
+    from app.logs.models import JobLog, ModelLog, OperationLog
+
+    headers = _admin_headers(client, "admin_log_filter_reader")
+    session_local = get_session_local()
+    created_at = datetime.now(timezone.utc)
+    with session_local() as db:
+        db.add_all(
+            [
+                ModelLog(
+                    user_id=1,
+                    task_type="exercise",
+                    provider="real",
+                    api_role="generate",
+                    api_base_url="https://api.example/v1",
+                    model="deepseek-v4-pro",
+                    prompt_tokens=100,
+                    completion_tokens=50,
+                    estimated_cost=0.03,
+                    cost_currency="CNY",
+                    latency_ms=800,
+                    success=True,
+                    fallback_used=False,
+                    status="success",
+                    created_at=created_at,
+                ),
+                ModelLog(
+                    user_id=1,
+                    task_type="exercise_review",
+                    provider="real",
+                    api_role="review",
+                    api_base_url="https://api.example/v1",
+                    model="audit-model",
+                    prompt_tokens=80,
+                    completion_tokens=20,
+                    estimated_cost=0.02,
+                    cost_currency="CNY",
+                    latency_ms=900,
+                    success=False,
+                    fallback_used=False,
+                    status="error",
+                    error_message="rate limit",
+                    created_at=created_at,
+                ),
+                JobLog(
+                    job_type="material_parse",
+                    status="failed",
+                    resource_type="material",
+                    resource_id=10,
+                    user_id=1,
+                    error_message="parse failed",
+                    created_at=created_at,
+                ),
+                OperationLog(
+                    user_id=1,
+                    action="lesson:update",
+                    resource="lesson",
+                    detail="updated lesson title",
+                    created_at=created_at,
+                ),
+            ]
+        )
+        db.commit()
+
+    failed_models = client.get("/api/logs/models?success=false&q=rate", headers=headers)
+    failed_jobs = client.get("/api/logs/jobs?status=failed&q=parse", headers=headers)
+    operations = client.get("/api/logs/operations?q=lesson", headers=headers)
+    daily = client.get("/api/logs/usage-daily?group_by=model&days=7", headers=headers)
+
+    assert failed_models.status_code == 200
+    assert [log["model"] for log in failed_models.json()] == ["audit-model"]
+    assert failed_jobs.status_code == 200
+    assert failed_jobs.json()[0]["job_type"] == "material_parse"
+    assert operations.status_code == 200
+    assert operations.json()[0]["action"] == "lesson:update"
+    assert daily.status_code == 200
+    rows = daily.json()
+    assert any(row["group_key"] == "generate:deepseek-v4-pro" for row in rows)
+    assert any(row["total_tokens"] == 150 for row in rows)
+
+
 def test_logs_health_reports_demo_readiness_without_exposing_secrets(client):
     from app.core.database import get_session_local
     from app.ai.models import AIProviderConfig
@@ -442,6 +524,9 @@ def test_database_management_reports_whitelisted_table_counts(client):
     assert body["available_table_count"] == body["table_count"]
     assert body["total_rows"] >= 1
     assert any("不会执行任意 SQL" in note for note in body["safety_notes"])
+    assert body["vector_store"]["provider"] == "disabled"
+    assert body["vector_store"]["status"] == "disabled"
+    assert body["vector_store"]["chunk_count"] == 0
 
     tables = {table["name"]: table for table in body["tables"]}
     assert tables["users"]["label"] == "用户"
@@ -471,3 +556,13 @@ def test_demo_seed_endpoint_initializes_idempotent_demo_data(client):
     assert tables["courses"]["row_count"] >= 1
     assert tables["material_chunks"]["row_count"] >= 1
     assert tables["question_bank_items"]["row_count"] >= 1
+
+    search_response = client.post(
+        "/api/logs/database/vector-search",
+        headers=headers,
+        json={"query": "矩阵乘法", "top_k": 3},
+    )
+    assert search_response.status_code == 200
+    search_body = search_response.json()
+    assert search_body["retrieval_mode"] == "lexical"
+    assert search_body["hits"][0]["material_title"] == "矩阵乘法讲义片段"

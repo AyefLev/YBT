@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OperationLogRead(BaseModel):
@@ -102,6 +102,18 @@ class ModelUsageRead(BaseModel):
     call_count: int
 
 
+class DailyUsageRead(BaseModel):
+    day: str
+    group_key: str
+    group_label: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost: float = 0.0
+    cost_currency: str = "CNY"
+    call_count: int
+
+
 class HealthComponentRead(BaseModel):
     status: str
     kind: str
@@ -148,6 +160,19 @@ class DatabaseTableRead(BaseModel):
     note: str = ""
 
 
+class DatabaseVectorStoreRead(BaseModel):
+    provider: str
+    collection: str
+    enabled: bool
+    status: str
+    message: str
+    points_count: int = 0
+    dimensions: int | None = None
+    distance: str = ""
+    indexed_chunk_count: int = 0
+    chunk_count: int = 0
+
+
 class DatabaseManagementRead(BaseModel):
     status: str
     kind: str
@@ -156,7 +181,31 @@ class DatabaseManagementRead(BaseModel):
     total_rows: int
     message: str
     safety_notes: list[str]
+    vector_store: DatabaseVectorStoreRead
     tables: list[DatabaseTableRead]
+
+
+class DatabaseVectorSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    top_k: int = Field(default=5, ge=1, le=20)
+    material_ids: list[int] = []
+
+
+class DatabaseVectorSearchHitRead(BaseModel):
+    id: int
+    material_id: int
+    material_title: str
+    content: str
+    score: float
+    page_no: int | None
+    slide_no: int | None
+
+
+class DatabaseVectorSearchRead(BaseModel):
+    query: str
+    retrieval_mode: str
+    cache_hit: bool
+    hits: list[DatabaseVectorSearchHitRead]
 
 
 class DemoSeedResultRead(BaseModel):

@@ -358,10 +358,6 @@ onMounted(loadHealth)
               </dd>
             </div>
           </dl>
-          <p class="strategy-note">
-            生成审核策略：多 AI 审核{{ health.models.multi_agent_review ? '已启用' : '未启用' }}，
-            失败兜底{{ health.models.mock_on_failure ? '已启用' : '未启用' }}。策略开关由后端环境与生成流程控制。
-          </p>
         </section>
       </div>
 
@@ -520,16 +516,6 @@ onMounted(loadHealth)
   margin: 0;
   color: var(--text);
   overflow-wrap: anywhere;
-}
-
-.strategy-note {
-  margin: 0;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  padding: 11px 12px;
-  color: var(--brand-ink);
-  background: var(--brand-soft);
-  line-height: 1.6;
 }
 
 .connectivity-grid {
