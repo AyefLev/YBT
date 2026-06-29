@@ -1,4 +1,7 @@
 import json
+from io import BytesIO
+
+from pptx import Presentation
 
 
 def _auth_headers(client, username: str = "presentation_teacher") -> dict[str, str]:
@@ -120,6 +123,14 @@ def test_generate_lesson_presentation_returns_slides_and_downloadable_pptx(clien
         "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     )
     assert download_response.content.startswith(b"PK")
+
+    deck = Presentation(BytesIO(download_response.content))
+    slide_texts = [
+        "\n".join(shape.text for shape in slide.shapes if hasattr(shape, "text"))
+        for slide in deck.slides
+    ]
+    assert any("视觉设计" in text for text in slide_texts)
+    assert any("课堂讲解" in text for text in slide_texts)
 
 
 def json_dumps(value: object) -> str:

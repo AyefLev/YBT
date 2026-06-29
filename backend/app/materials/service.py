@@ -11,14 +11,16 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.auth.models import User
+from app.ai.service import analyze_image
 from app.cache.service import get_cache
 from app.core.config import get_settings
 from app.core.database import get_session_local
 from app.courses.models import Chapter, Course, KnowledgePoint, LessonSession
 from app.logs.models import JobLog
 from app.materials.models import Material, MaterialChunk
-from app.materials.parsers import SUPPORTED_SUFFIXES, ParsedText, parse_material
+from app.materials.parsers import MaterialNeedsVisionError, SUPPORTED_SUFFIXES, ParsedText, parse_material
 from app.materials.schemas import MaterialParseStatusRead
+from app.materials.vision import render_pdf_pages_for_vision
 from app.retrieval.vector_store import (
     delete_material_vectors,
     index_material_vectors,
@@ -30,6 +32,10 @@ DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 80
 CHUNK_STRATEGIES = {"fixed", "paragraph", "parent_child"}
 _PARSE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="material-parser")
+
+
+class VisionMaterialParseUnavailable(RuntimeError):
+    pass
 
 
 def create_material_record_from_upload(
@@ -164,7 +170,14 @@ def parse_material_job(material_id: int) -> None:
         db.flush()
 
         try:
-            parsed_texts = parse_material(Path(material.file_path), material.file_type)
+            try:
+                parsed_texts = parse_material(Path(material.file_path), material.file_type)
+            except MaterialNeedsVisionError as exc:
+                parsed_texts = _parse_pdf_with_vision(
+                    db,
+                    material=material,
+                    reason=str(exc),
+                )
             _replace_chunks(db, material=material, parsed_texts=parsed_texts)
             chunk_count = len(material.chunks)
             should_index_vectors = chunk_count > 0
@@ -176,6 +189,17 @@ def parse_material_job(material_id: int) -> None:
                 material_id=material.id,
                 status=material.parse_status,
                 detail=job_log.detail,
+            )
+        except VisionMaterialParseUnavailable as exc:
+            material.parse_status = "needs_vision"
+            material.parse_error = str(exc) or exc.__class__.__name__
+            job_log.status = "needs_vision"
+            job_log.error_message = material.parse_error
+            write_material_parse_status_cache(
+                material_id=material.id,
+                status="needs_vision",
+                detail=f"{material.file_name} 需要视觉模型解析",
+                error_message=material.parse_error,
             )
         except Exception as exc:
             material.parse_status = "failed"
@@ -244,6 +268,61 @@ def index_material_vectors_job(material_id: int) -> None:
             db.commit()
 
 
+def _parse_pdf_with_vision(
+    db: Session,
+    *,
+    material: Material,
+    reason: str,
+) -> list[ParsedText]:
+    if material.file_type != ".pdf":
+        raise VisionMaterialParseUnavailable(reason)
+    try:
+        rendered_pages = render_pdf_pages_for_vision(Path(material.file_path))
+    except Exception as exc:
+        raise VisionMaterialParseUnavailable(
+            f"{reason} 当前无法渲染 PDF 页面或视觉解析依赖不可用，请启用视觉模型解析后重新解析。"
+        ) from exc
+
+    if not rendered_pages:
+        raise VisionMaterialParseUnavailable(f"{reason} 未能渲染出可供视觉模型识别的页面。")
+
+    parsed: list[ParsedText] = []
+    for page in rendered_pages:
+        try:
+            result = analyze_image(
+                db,
+                image_bytes=page.image_bytes,
+                mime_type=page.mime_type,
+                prompt=_vision_pdf_prompt(material, page.page_no),
+                user_id=material.uploader_id,
+            )
+        except Exception as exc:
+            raise VisionMaterialParseUnavailable(
+                f"{reason} 视觉模型解析第 {page.page_no} 页失败：{exc}"
+            ) from exc
+        content = result.content.strip()
+        if content:
+            parsed.append(ParsedText(content=content, page_no=page.page_no))
+
+    if not parsed:
+        raise VisionMaterialParseUnavailable(f"{reason} 视觉模型未返回可用文本。")
+    return parsed
+
+
+def _vision_pdf_prompt(material: Material, page_no: int) -> str:
+    return (
+        "请识别这页考研教学资料并输出可写入知识库的中文纯文本。\n"
+        "要求：\n"
+        "1. 面向考研备课和习题生成，保留题干、条件、答案、解析、公式和图表含义。\n"
+        "2. 数学公式用 LaTeX 或清晰文本表达，不要输出无意义乱码。\n"
+        "3. 不要描述页面截图本身，不要输出 Markdown 标题。\n"
+        "4. 如果某处无法识别，请写“[此处无法识别]”，不要猜造内容。\n\n"
+        f"资料标题：{material.title}\n"
+        f"学科：{material.subject or '未标注'}\n"
+        f"页码：{page_no}"
+    )
+
+
 def get_owned_material(db: Session, *, material_id: int, current_user: User) -> Material | None:
     statement = select(Material).where(Material.id == material_id)
     if "material:view_all" not in current_user.permission_codes and "material:manage_all" not in current_user.permission_codes:
@@ -296,8 +375,15 @@ def delete_material(db: Session, *, material: Material) -> None:
 
 
 def mark_material_for_reparse(db: Session, *, material: Material) -> Material:
+    _replace_chunks(db, material=material, parsed_texts=[])
+    delete_material_vectors(material_id=material.id)
     material.parse_status = "pending"
     material.parse_error = None
+    write_material_parse_status_cache(
+        material_id=material.id,
+        status="pending",
+        detail="Material queued for reparse",
+    )
     db.flush()
     return material
 

@@ -209,6 +209,7 @@ function statusLabel(status: string): string {
     parsing: '解析中',
     parsed: '已解析',
     empty: '无内容',
+    needs_vision: '需视觉解析',
     failed: '解析失败',
   }
   return labels[status] ?? status

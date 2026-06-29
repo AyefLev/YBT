@@ -24,6 +24,8 @@ class LessonGenerateRequest(BaseModel):
     prompt_template: str = ""
     output_format: str = ""
     web_search_enabled: bool = False
+    multi_agent_review: bool | None = None
+    auto_revise: bool = True
 
 
 class LessonCreateRequest(BaseModel):

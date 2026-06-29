@@ -156,6 +156,8 @@ const form = reactive({
   retrieval_focus: 'balanced',
   prompt_template: '',
   output_format: '',
+  multi_agent_review: true,
+  auto_revise: true,
   change_note: '首次保存',
 })
 
@@ -439,6 +441,8 @@ async function generateLesson() {
         retrieval_focus: form.retrieval_focus,
         prompt_template: form.prompt_template,
         output_format: form.output_format,
+        multi_agent_review: form.multi_agent_review,
+        auto_revise: form.auto_revise,
       }),
     })
     content.value = result.content
@@ -734,6 +738,17 @@ watch([form, content, selectedMaterialIds], () => {
           <span>输出格式要求</span>
           <textarea v-model.trim="form.output_format" rows="2" class="ui-input textarea" placeholder="例如：按教学目标、导入、讲解、练习、总结输出"></textarea>
         </label>
+
+        <div class="review-options wide">
+          <label class="checkbox-field">
+            <input v-model="form.multi_agent_review" type="checkbox" class="ui-checkbox" />
+            <span>启用多 AI 复核</span>
+          </label>
+          <label class="checkbox-field">
+            <input v-model="form.auto_revise" type="checkbox" class="ui-checkbox" :disabled="!form.multi_agent_review" />
+            <span>发现问题时自动生成修订稿</span>
+          </label>
+        </div>
         
         <button class="btn-primary wide mt-4" type="submit" :disabled="loading === 'generate'">
           <span v-if="loading === 'generate'" class="spinner"></span>
@@ -818,11 +833,14 @@ watch([form, content, selectedMaterialIds], () => {
             </div>
           </div>
 
-          <div v-if="review?.enabled" class="insight-card info">
-            <div class="card-header">AI 复核：{{ review.status }} ({{ review.reviewer_model }})</div>
+          <div v-if="review" class="insight-card info">
+            <div class="card-header">AI 复核：{{ review.enabled ? review.status : '未启用' }} ({{ review.reviewer_model }})</div>
             <div class="card-body">
-              <p v-if="review.warnings.length"><strong>风险：</strong>{{ review.warnings.join('；') }}</p>
-              <p v-if="review.suggestions.length"><strong>建议：</strong>{{ review.suggestions.join('；') }}</p>
+              <p v-if="!review.enabled">本次生成未启用多 AI 复核，可在左侧勾选后重新生成。</p>
+              <template v-else>
+                <p v-if="review.warnings.length"><strong>风险：</strong>{{ review.warnings.join('；') }}</p>
+                <p v-if="review.suggestions.length"><strong>建议：</strong>{{ review.suggestions.join('；') }}</p>
+              </template>
             </div>
           </div>
 
@@ -1050,6 +1068,15 @@ h1 {
   align-items: center;
   gap: 8px;
   cursor: pointer;
+}
+
+.review-options {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
 }
 
 .ui-checkbox {

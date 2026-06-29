@@ -45,7 +45,14 @@ def generate_lesson(
         form["web_search_note"] = "已预留网络检索接入点；当前离线演示版本不会主动访问公网。"
     prompt = build_lesson_prompt(form, [reference.content for reference in references])
     ai_result = generate_text(db, "lesson", prompt, user_id=current_user.id)
-    review = review_generated_content(db, task_type="lesson", content=ai_result.content, user_id=current_user.id)
+    review = review_generated_content(
+        db,
+        task_type="lesson",
+        content=ai_result.content,
+        enabled=payload.multi_agent_review,
+        auto_revise=payload.auto_revise,
+        user_id=current_user.id,
+    )
     compliance = check_content(db, "lesson", ai_result.content)
 
     return LessonGenerateResponse(

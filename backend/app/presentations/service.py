@@ -7,7 +7,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from pptx import Presentation as PptxPresentation
-from pptx.util import Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
+from pptx.util import Inches, Pt
 from sqlalchemy.orm import Session
 
 from app.ai.prompts import POSTGRADUATE_AUDIENCE_REQUIREMENTS
@@ -193,33 +196,136 @@ def _write_pptx(*, lesson: Lesson, slides: list[PresentationSlideRead]) -> Path:
     file_path = _presentation_file_path(export_dir, lesson)
 
     deck = PptxPresentation()
+    deck.slide_width = Inches(13.333)
+    deck.slide_height = Inches(7.5)
     for slide_data in slides:
-        slide = deck.slides.add_slide(deck.slide_layouts[1])
-        slide.shapes.title.text = slide_data.title
-        text_frame = slide.placeholders[1].text_frame
-        text_frame.clear()
-        if slide_data.bullets:
-            for index, bullet in enumerate(slide_data.bullets):
-                paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
-                paragraph.text = bullet
-                paragraph.level = 0
-                for run in paragraph.runs:
-                    run.font.size = Pt(20)
-        else:
-            text_frame.text = "Key point"
-
-        if slide_data.visual_prompt:
-            paragraph = text_frame.add_paragraph()
-            paragraph.text = f"Visual: {slide_data.visual_prompt}"
-            paragraph.level = 0
-            for run in paragraph.runs:
-                run.font.size = Pt(14)
-
+        slide = deck.slides.add_slide(deck.slide_layouts[6])
+        _paint_slide(slide, slide_data=slide_data)
         if slide_data.speaker_notes:
             slide.notes_slide.notes_text_frame.text = slide_data.speaker_notes
 
     deck.save(file_path)
     return file_path
+
+
+def _paint_slide(slide, *, slide_data: PresentationSlideRead) -> None:
+    background = slide.background.fill
+    background.solid()
+    background.fore_color.rgb = RGBColor(248, 250, 252)
+
+    accent = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(0.16), Inches(7.5))
+    accent.fill.solid()
+    accent.fill.fore_color.rgb = RGBColor(37, 99, 235)
+    accent.line.fill.background()
+
+    title_box = slide.shapes.add_textbox(Inches(0.55), Inches(0.35), Inches(8.7), Inches(0.72))
+    title_frame = title_box.text_frame
+    title_frame.clear()
+    title_frame.word_wrap = True
+    title_paragraph = title_frame.paragraphs[0]
+    title_paragraph.text = slide_data.title
+    title_paragraph.font.size = Pt(30)
+    title_paragraph.font.bold = True
+    title_paragraph.font.color.rgb = RGBColor(15, 23, 42)
+
+    badge = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(10.2), Inches(0.42), Inches(2.35), Inches(0.46))
+    badge.fill.solid()
+    badge.fill.fore_color.rgb = RGBColor(219, 234, 254)
+    badge.line.fill.background()
+    badge_frame = badge.text_frame
+    badge_frame.clear()
+    badge_frame.margin_left = Inches(0.08)
+    badge_frame.margin_right = Inches(0.08)
+    badge_paragraph = badge_frame.paragraphs[0]
+    badge_paragraph.text = "考研课堂讲义"
+    badge_paragraph.alignment = PP_ALIGN.CENTER
+    badge_paragraph.font.size = Pt(13)
+    badge_paragraph.font.bold = True
+    badge_paragraph.font.color.rgb = RGBColor(30, 64, 175)
+
+    content_panel = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(0.55),
+        Inches(1.35),
+        Inches(7.7),
+        Inches(5.35),
+    )
+    content_panel.fill.solid()
+    content_panel.fill.fore_color.rgb = RGBColor(255, 255, 255)
+    content_panel.line.color.rgb = RGBColor(226, 232, 240)
+    content_frame = content_panel.text_frame
+    content_frame.clear()
+    content_frame.margin_left = Inches(0.32)
+    content_frame.margin_right = Inches(0.25)
+    content_frame.margin_top = Inches(0.22)
+    content_frame.word_wrap = True
+    heading = content_frame.paragraphs[0]
+    heading.text = "课堂讲解"
+    heading.font.size = Pt(16)
+    heading.font.bold = True
+    heading.font.color.rgb = RGBColor(37, 99, 235)
+    bullets = slide_data.bullets or ["围绕本页主题展开核心概念、方法步骤和课堂提问。"]
+    for bullet in bullets[:7]:
+        paragraph = content_frame.add_paragraph()
+        paragraph.text = bullet
+        paragraph.level = 0
+        paragraph.space_before = Pt(8)
+        paragraph.font.size = Pt(20)
+        paragraph.font.color.rgb = RGBColor(30, 41, 59)
+
+    visual_panel = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(8.55),
+        Inches(1.35),
+        Inches(4.2),
+        Inches(3.18),
+    )
+    visual_panel.fill.solid()
+    visual_panel.fill.fore_color.rgb = RGBColor(239, 246, 255)
+    visual_panel.line.color.rgb = RGBColor(147, 197, 253)
+    visual_frame = visual_panel.text_frame
+    visual_frame.clear()
+    visual_frame.margin_left = Inches(0.24)
+    visual_frame.margin_right = Inches(0.22)
+    visual_frame.margin_top = Inches(0.2)
+    visual_frame.word_wrap = True
+    visual_title = visual_frame.paragraphs[0]
+    visual_title.text = "视觉设计"
+    visual_title.font.size = Pt(15)
+    visual_title.font.bold = True
+    visual_title.font.color.rgb = RGBColor(29, 78, 216)
+    visual_body = visual_frame.add_paragraph()
+    visual_body.text = slide_data.visual_prompt or "用板书、公式框或坐标示意图辅助解释本页内容。"
+    visual_body.space_before = Pt(8)
+    visual_body.font.size = Pt(16)
+    visual_body.font.color.rgb = RGBColor(30, 64, 175)
+
+    notes_panel = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(8.55),
+        Inches(4.75),
+        Inches(4.2),
+        Inches(1.95),
+    )
+    notes_panel.fill.solid()
+    notes_panel.fill.fore_color.rgb = RGBColor(240, 253, 244)
+    notes_panel.line.color.rgb = RGBColor(134, 239, 172)
+    notes_frame = notes_panel.text_frame
+    notes_frame.clear()
+    notes_frame.margin_left = Inches(0.24)
+    notes_frame.margin_right = Inches(0.22)
+    notes_frame.margin_top = Inches(0.18)
+    notes_frame.word_wrap = True
+    notes_title = notes_frame.paragraphs[0]
+    notes_title.text = "讲稿备注"
+    notes_title.font.size = Pt(15)
+    notes_title.font.bold = True
+    notes_title.font.color.rgb = RGBColor(22, 101, 52)
+    notes_body = notes_frame.add_paragraph()
+    notes_body.text = slide_data.speaker_notes or "结合学生基础补充推导、例题和易错点。"
+    notes_body.space_before = Pt(7)
+    notes_body.font.size = Pt(14)
+    notes_body.font.color.rgb = RGBColor(21, 128, 61)
 
 
 def _presentation_file_path(export_dir: Path, lesson: Lesson) -> Path:

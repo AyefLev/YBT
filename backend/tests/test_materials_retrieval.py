@@ -56,6 +56,18 @@ def _upload_txt_with_scope(
     )
 
 
+def _blank_pdf_bytes() -> bytes:
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+
+    output = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=595, height=842)
+    writer.write(output)
+    return output.getvalue()
+
+
 def test_upload_txt_material_and_retrieve_chinese_query(client):
     headers = _auth_headers(client)
 
@@ -107,6 +119,36 @@ def test_material_chunks_strip_nul_characters_before_storage(client):
     assert chunks
     assert "\x00" not in chunks[0]["content"]
     assert "matrix multiplication" in chunks[0]["content"]
+
+
+def test_reparse_clears_stale_chunks_before_next_parse_finishes(client):
+    from app.core.database import get_session_local
+    from app.materials.models import Material
+    from app.materials.service import mark_material_for_reparse
+
+    headers = _auth_headers(client, username="teacher_reparse_clears_stale_chunks")
+    upload_response = _upload_txt(
+        client,
+        headers,
+        "Stale Chunk Material",
+        "old extracted content should not remain during reparse",
+    )
+
+    assert upload_response.status_code == 201
+    material_id = upload_response.json()["id"]
+    before_response = client.get(f"/api/materials/{material_id}/chunks", headers=headers)
+    assert before_response.status_code == 200
+    assert before_response.json()
+
+    session_local = get_session_local()
+    with session_local() as db:
+        material = db.get(Material, material_id)
+        mark_material_for_reparse(db, material=material)
+        db.commit()
+
+    after_response = client.get(f"/api/materials/{material_id}/chunks", headers=headers)
+    assert after_response.status_code == 200
+    assert after_response.json() == []
 
 
 def test_owner_can_retrieve_without_material_ids(client):
@@ -270,6 +312,100 @@ def test_malformed_docx_upload_records_failed_parse_status(client):
     assert body["parse_status"] == "failed"
     assert body["parse_error"]
     assert len(set(upload_dir.iterdir()) - before_files) == 1
+
+
+def test_scanned_pdf_without_vision_is_marked_as_needing_vision(client):
+    headers = _auth_headers(client, username="teacher_scanned_pdf_needs_vision")
+
+    response = client.post(
+        "/api/materials/upload",
+        headers=headers,
+        data={"title": "Scanned Math PDF"},
+        files={"file": ("scanned.pdf", _blank_pdf_bytes(), "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["parse_status"] == "needs_vision"
+    assert "视觉模型" in body["parse_error"]
+    assert body["chunk_count"] == 0
+
+
+def test_pdf_garbled_control_characters_are_low_quality_text():
+    from app.materials.parsers import _is_low_quality_extracted_text
+
+    garbled = "".join(
+        [
+            "\x03\x05\n\x06\n\x02\x07\x0e\x01\x0f\x10\t\x08\x10\x04 ",
+            "\x8f\x98",
+            chr(0x01A3),
+            "\n\x05\t\x11\n\x10\x12\x0f\x04\n",
+            chr(0x019D),
+            chr(0x0191),
+            "MG",
+            chr(0x0113),
+            chr(0x0192),
+            chr(0x0110),
+        ]
+    )
+    readable = "2025版强化36讲勘误汇总\n高数第18讲 数列极限三向解题法 P68"
+
+    assert _is_low_quality_extracted_text(garbled) is True
+    assert _is_low_quality_extracted_text(readable) is False
+
+
+def test_scanned_pdf_uses_vision_fallback_when_available(client, monkeypatch):
+    from app.ai.schemas import AIResult
+    from app.materials.vision import RenderedPage
+    import app.materials.service as material_service
+
+    headers = _auth_headers(client, username="teacher_scanned_pdf_vision")
+
+    monkeypatch.setattr(
+        material_service,
+        "render_pdf_pages_for_vision",
+        lambda _path: [
+            RenderedPage(
+                page_no=1,
+                image_bytes=b"\x89PNG\r\n\x1a\nrendered-page",
+                mime_type="image/png",
+            )
+        ],
+    )
+
+    def fake_analyze_image(db, *, image_bytes, mime_type, prompt, user_id=None):
+        assert image_bytes.startswith(b"\x89PNG")
+        assert mime_type == "image/png"
+        assert "考研" in prompt
+        assert user_id is not None
+        return AIResult(
+            content="导数定义：设函数 y=f(x)，导数刻画自变量微小变化下函数值的变化率。",
+            provider="real",
+            model="vision-model",
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(material_service, "analyze_image", fake_analyze_image)
+
+    response = client.post(
+        "/api/materials/upload",
+        headers=headers,
+        data={"title": "Vision Parsed PDF"},
+        files={"file": ("scanned.pdf", _blank_pdf_bytes(), "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["parse_status"] == "parsed"
+    assert body["parse_error"] in (None, "")
+    assert body["chunk_count"] == 1
+
+    chunks_response = client.get(f"/api/materials/{body['id']}/chunks", headers=headers)
+
+    assert chunks_response.status_code == 200
+    chunks = chunks_response.json()
+    assert chunks[0]["page_no"] == 1
+    assert "导数定义" in chunks[0]["content"]
 
 
 def test_retrieval_ignores_single_shared_chinese_character(client):

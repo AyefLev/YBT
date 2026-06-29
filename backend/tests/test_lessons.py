@@ -265,3 +265,23 @@ def test_phase2_generate_lesson_returns_multi_ai_review(client, monkeypatch):
     assert "warnings" in body["review"]
     assert "suggestions" in body["review"]
     assert "raw_review" in body["review"]
+
+
+def test_generate_lesson_can_enable_review_per_request_when_global_disabled(client, monkeypatch):
+    monkeypatch.setenv("LLM_MULTI_AGENT_REVIEW", "false")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    headers = _auth_headers(client, username="teacher_lesson_request_review")
+
+    response = client.post(
+        "/api/lessons/generate",
+        headers=headers,
+        json=_generate_payload(multi_agent_review=True, auto_revise=True),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["review"]["enabled"] is True
+    assert body["review"]["status"] in {"passed", "warning"}
+    assert body["review"]["reviewer_model"]

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+import unicodedata
 
 from docx import Document
 from pptx import Presentation
@@ -14,6 +15,10 @@ class ParsedText:
 
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".docx", ".pdf", ".pptx"}
+
+
+class MaterialNeedsVisionError(RuntimeError):
+    """Raised when a PDF has no trustworthy extractable text."""
 
 
 def parse_material(path: Path, suffix: str) -> list[ParsedText]:
@@ -52,10 +57,19 @@ def _parse_docx(path: Path) -> list[ParsedText]:
 def _parse_pdf(path: Path) -> list[ParsedText]:
     reader = PdfReader(path)
     parsed: list[ParsedText] = []
+    low_quality_pages = 0
     for index, page in enumerate(reader.pages, start=1):
         text = page.extract_text() or ""
+        if not text.strip():
+            low_quality_pages += 1
+            continue
+        if _is_low_quality_extracted_text(text):
+            low_quality_pages += 1
+            continue
         if text.strip():
             parsed.append(ParsedText(text, page_no=index))
+    if len(reader.pages) > 0 and not parsed and low_quality_pages:
+        raise MaterialNeedsVisionError("PDF 文本提取为空或质量过低，需要视觉模型解析。")
     return parsed
 
 
@@ -71,3 +85,36 @@ def _parse_pptx(path: Path) -> list[ParsedText]:
         if text.strip():
             parsed.append(ParsedText(text, slide_no=index))
     return parsed
+
+
+def _is_low_quality_extracted_text(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return True
+    suspicious_chars = sum(1 for char in normalized if char in {"�", "\ufffd", "□", "\x00"})
+    if suspicious_chars / max(len(normalized), 1) > 0.08:
+        return True
+    meaningful_chars = [char for char in normalized if not char.isspace()]
+    control_chars = [
+        char
+        for char in meaningful_chars
+        if unicodedata.category(char) in {"Cc", "Cf", "Cs", "Co", "Cn"}
+    ]
+    if len(control_chars) / max(len(meaningful_chars), 1) > 0.08:
+        return True
+    latin_extended_chars = [
+        char
+        for char in meaningful_chars
+        if 0x0100 <= ord(char) <= 0x024F
+    ]
+    cjk_chars = [
+        char
+        for char in meaningful_chars
+        if "\u4e00" <= char <= "\u9fff"
+    ]
+    if latin_extended_chars and len(cjk_chars) < 3 and len(latin_extended_chars) / max(len(meaningful_chars), 1) > 0.15:
+        return True
+    visible_chars = sum(1 for char in normalized if not char.isspace())
+    if visible_chars < 8:
+        return True
+    return False
