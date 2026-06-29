@@ -10,8 +10,16 @@ from app.ai.config_service import (
     list_ai_provider_configs,
     upsert_ai_provider_config,
 )
-from app.ai.schemas import ModelCapabilityResponse, ModelConnectivityResponse, VisionAnalysisResponse
-from app.ai.service import analyze_image, check_model_connectivity, _provider_config_for_role
+from app.ai.embeddings import embed_text
+from app.ai.schemas import (
+    AIResult,
+    ModelCapabilityResponse,
+    ModelConnectivityResponse,
+    ModelTestRequest,
+    ModelTestResponse,
+    VisionAnalysisResponse,
+)
+from app.ai.service import analyze_image, check_model_connectivity, generate_text, _provider_config_for_role
 from app.auth.models import User
 from app.cache.service import get_cache
 from app.core.config import get_settings
@@ -19,6 +27,12 @@ from app.core.database import get_db
 from app.core.deps import require_any_permission, require_permission
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+TEXT_TEST_ROLES = {
+    "generate": "admin_model_test",
+    "review": "admin_model_test_review",
+    "revise": "admin_model_test_revise",
+}
 
 
 @router.get("/capabilities", response_model=ModelCapabilityResponse)
@@ -111,6 +125,83 @@ def analyze_vision_image(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return VisionAnalysisResponse(content=result.content, provider_status=result)
+
+
+@router.post("/admin/model-tests/vision-image", response_model=ModelTestResponse)
+def test_admin_vision_model(
+    prompt: str = Form("请只回复 ok，用于视觉模型连通性与图片输入测试。"),
+    file: UploadFile = File(...),
+    _=Depends(require_permission("admin:content_manage")),
+    db: Session = Depends(get_db),
+) -> ModelTestResponse:
+    content_type = file.content_type or "application/octet-stream"
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only image uploads are supported")
+    image_bytes = file.file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image file is empty")
+    if len(image_bytes) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image file is too large")
+
+    try:
+        result = analyze_image(
+            db,
+            image_bytes=image_bytes,
+            mime_type=content_type,
+            prompt=prompt,
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return ModelTestResponse(role="vision", content=result.content, provider_status=result)
+
+
+@router.post("/admin/model-tests/{role}", response_model=ModelTestResponse)
+def test_admin_model(
+    role: str,
+    payload: ModelTestRequest,
+    _=Depends(require_permission("admin:content_manage")),
+    db: Session = Depends(get_db),
+) -> ModelTestResponse:
+    normalized_role = role.strip().lower()
+    if normalized_role in TEXT_TEST_ROLES:
+        try:
+            result = generate_text(
+                db,
+                TEXT_TEST_ROLES[normalized_role],
+                payload.prompt,
+            )
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        return ModelTestResponse(role=normalized_role, content=result.content, provider_status=result)
+
+    if normalized_role == "embedding":
+        try:
+            vector = embed_text(payload.prompt, dimensions=get_settings().embedding_dimensions, db=db)
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        provider_config = _provider_config_for_role(get_settings(), "embedding", db=db)
+        provider = "api" if provider_config.api_key else "local"
+        return ModelTestResponse(
+            role="embedding",
+            content=f"已生成 {len(vector)} 维向量，前 8 维已展示。",
+            provider_status=AIResult(
+                content="embedding vector generated",
+                provider=provider,
+                model=provider_config.model,
+                fallback_used=False,
+            ),
+            vector_dimensions=len(vector),
+            vector_preview=[round(value, 6) for value in vector[:8]],
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported model test role. Use generate, review, revise, embedding or vision-image.",
+    )
 
 
 @router.get("/admin/provider-configs", response_model=list[AIProviderConfigRead])

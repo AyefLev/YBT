@@ -12,9 +12,15 @@ interface HealthComponent {
 interface ModelHealth {
   text_model: string
   generate_model: string
+  generate_configured: boolean
   review_model: string
+  review_configured: boolean
   revise_model: string
+  revise_configured: boolean
   vision_model: string | null
+  vision_configured: boolean
+  embedding_model: string
+  embedding_configured: boolean
   api_key_configured: boolean
   vision_api_key_configured: boolean
   multi_agent_review: boolean
@@ -66,24 +72,48 @@ interface AIResult {
   error_message: string | null
 }
 
-interface VisionAnalysisResponse {
+interface ModelTestResponse {
+  role: string
   content: string
-  provider_status: AIResult
+  provider_status: AIResult | null
+  vector_dimensions: number | null
+  vector_preview: number[]
 }
 
 const health = ref<SystemHealth | null>(null)
 const connectivity = ref<ModelConnectivity | null>(null)
 const loading = ref(false)
 const probing = ref(false)
-const visionTesting = ref(false)
+const modelTesting = ref(false)
 const error = ref('')
 const probeError = ref('')
-const visionError = ref('')
-const visionPrompt = ref('请分析这张图片里可用于教学的关键信息，并给出可转成课件或习题的建议。')
-const visionFile = ref<File | null>(null)
-const visionAnalysis = ref<VisionAnalysisResponse | null>(null)
+const modelTestError = ref('')
+const activeTestRole = ref('generate')
+const modelTestPrompt = ref('请只回复 ok，用于模型连通性与输出格式测试。')
+const modelTestFile = ref<File | null>(null)
+const modelTestResult = ref<ModelTestResponse | null>(null)
 
 const overallText = computed(() => statusLabel(health.value?.overall_status ?? 'unknown'))
+const modelTestTabs = [
+  { role: 'generate', label: '生成模型' },
+  { role: 'review', label: '审核模型' },
+  { role: 'revise', label: '修订模型' },
+  { role: 'embedding', label: '向量模型' },
+  { role: 'vision', label: '视觉模型' },
+]
+const activeTestTab = computed(() =>
+  modelTestTabs.find((item) => item.role === activeTestRole.value) ?? modelTestTabs[0],
+)
+const activeConnectivity = computed(() =>
+  connectivity.value?.checks.find((item) => item.role === activeTestRole.value) ?? null,
+)
+const isVisionTest = computed(() => activeTestRole.value === 'vision')
+const isEmbeddingTest = computed(() => activeTestRole.value === 'embedding')
+const activePromptPlaceholder = computed(() => {
+  if (isVisionTest.value) return '请分析这张图片里可用于教学的关键信息。'
+  if (isEmbeddingTest.value) return '输入一段要转成向量的教学文本。'
+  return '请只回复 ok，用于模型连通性与输出格式测试。'
+})
 
 async function loadHealth() {
   loading.value = true
@@ -114,30 +144,47 @@ async function probeModels() {
   }
 }
 
-function selectVisionFile(event: Event) {
+function selectModelTestFile(event: Event) {
   const input = event.target as HTMLInputElement
-  visionFile.value = input.files?.[0] ?? null
-  visionAnalysis.value = null
-  visionError.value = ''
+  modelTestFile.value = input.files?.[0] ?? null
+  modelTestResult.value = null
+  modelTestError.value = ''
 }
 
-async function analyzeVisionImage() {
-  if (!visionFile.value) {
-    visionError.value = '请先选择一张图片。'
+function selectModelTestRole(role: string) {
+  activeTestRole.value = role
+  modelTestResult.value = null
+  modelTestError.value = ''
+  modelTestFile.value = null
+  modelTestPrompt.value = role === 'vision'
+    ? '请分析这张图片里可用于教学的关键信息，并给出可转成课件或习题的建议。'
+    : '请只回复 ok，用于模型连通性与输出格式测试。'
+}
+
+async function runModelTest() {
+  if (isVisionTest.value && !modelTestFile.value) {
+    modelTestError.value = '请先选择一张图片。'
     return
   }
-  visionTesting.value = true
-  visionError.value = ''
-  visionAnalysis.value = null
-  const form = new FormData()
-  form.append('prompt', visionPrompt.value)
-  form.append('file', visionFile.value)
+  modelTesting.value = true
+  modelTestError.value = ''
+  modelTestResult.value = null
   try {
-    visionAnalysis.value = await apiForm<VisionAnalysisResponse>('/api/ai/vision/analyze', form)
+    if (isVisionTest.value) {
+      const form = new FormData()
+      form.append('prompt', modelTestPrompt.value)
+      form.append('file', modelTestFile.value as File)
+      modelTestResult.value = await apiForm<ModelTestResponse>('/api/ai/admin/model-tests/vision-image', form)
+    } else {
+      modelTestResult.value = await api<ModelTestResponse>(`/api/ai/admin/model-tests/${activeTestRole.value}`, {
+        method: 'POST',
+        body: JSON.stringify({ prompt: modelTestPrompt.value }),
+      })
+    }
   } catch (err) {
-    visionError.value = err instanceof Error ? err.message : '视觉模型测试失败'
+    modelTestError.value = err instanceof Error ? err.message : '模型测试失败'
   } finally {
-    visionTesting.value = false
+    modelTesting.value = false
   }
 }
 
@@ -271,9 +318,20 @@ onMounted(loadHealth)
             <div>
               <dt>生成 / 审核 / 修订</dt>
               <dd>
-                {{ health.models.generate_model }} /
-                {{ health.models.review_model }} /
-                {{ health.models.revise_model }}
+                {{ health.models.generate_model || '未配置' }}
+                <span class="status-pill" :class="statusClass(health.models.generate_configured ? 'success' : 'not_configured')">
+                  {{ health.models.generate_configured ? '可用' : '未配置' }}
+                </span>
+                /
+                {{ health.models.review_model || '未配置' }}
+                <span class="status-pill" :class="statusClass(health.models.review_configured ? 'success' : 'not_configured')">
+                  {{ health.models.review_configured ? '可用' : '未配置' }}
+                </span>
+                /
+                {{ health.models.revise_model || '未配置' }}
+                <span class="status-pill" :class="statusClass(health.models.revise_configured ? 'success' : 'not_configured')">
+                  {{ health.models.revise_configured ? '可用' : '未配置' }}
+                </span>
               </dd>
             </div>
             <div>
@@ -282,7 +340,21 @@ onMounted(loadHealth)
             </div>
             <div>
               <dt>视觉模型</dt>
-              <dd>{{ health.models.vision_model || '未配置' }}</dd>
+              <dd>
+                {{ health.models.vision_model || '未配置' }}
+                <span class="status-pill" :class="statusClass(health.models.vision_configured ? 'success' : 'not_configured')">
+                  {{ health.models.vision_configured ? '可用' : '未配置' }}
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt>向量模型</dt>
+              <dd>
+                {{ health.models.embedding_model || '未配置' }}
+                <span class="status-pill" :class="statusClass(health.models.embedding_configured ? 'success' : 'not_configured')">
+                  {{ health.models.embedding_configured ? '可用' : '未配置' }}
+                </span>
+              </dd>
             </div>
             <div>
               <dt>多 AI 审核</dt>
@@ -327,31 +399,64 @@ onMounted(loadHealth)
       </section>
       <section class="panel stack">
         <div class="panel-title">
-          <h2>视觉模型图片测试</h2>
-          <small>上传一张教学图片，直接调用已配置的视觉模型。</small>
+          <h2>模型单项测试</h2>
+          <small>按标签单独测试 API 管理中保存的模型配置。</small>
+        </div>
+        <div class="test-tabs" role="tablist" aria-label="模型测试类型">
+          <button
+            v-for="tab in modelTestTabs"
+            :key="tab.role"
+            type="button"
+            role="tab"
+            :aria-selected="activeTestRole === tab.role"
+            :class="{ active: activeTestRole === tab.role }"
+            @click="selectModelTestRole(tab.role)"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+        <div class="test-summary">
+          <div>
+            <strong>{{ activeTestTab.label }}</strong>
+            <small>
+              {{ activeConnectivity?.model || '未配置模型' }}
+              · {{ activeConnectivity ? statusLabel(activeConnectivity.status) : '未检测' }}
+            </small>
+          </div>
+          <span v-if="activeConnectivity" class="status-pill" :class="statusClass(activeConnectivity.status)">
+            {{ statusLabel(activeConnectivity.status) }}
+          </span>
         </div>
         <div class="vision-test-grid">
           <label>
-            测试提示词
-            <textarea v-model.trim="visionPrompt" rows="4" />
+            测试输入
+            <textarea v-model.trim="modelTestPrompt" rows="4" :placeholder="activePromptPlaceholder" />
           </label>
-          <label>
+          <label v-if="isVisionTest">
             图片
-            <input type="file" accept="image/*" @change="selectVisionFile" />
+            <input type="file" accept="image/*" @change="selectModelTestFile" />
           </label>
         </div>
         <button
           type="button"
           class="btn-primary"
-          :disabled="visionTesting || !visionFile"
-          @click="analyzeVisionImage"
+          :disabled="modelTesting || (isVisionTest && !modelTestFile)"
+          @click="runModelTest"
         >
-          {{ visionTesting ? '分析中...' : '测试视觉模型' }}
+          {{ modelTesting ? '测试中...' : `测试${activeTestTab.label}` }}
         </button>
-        <p v-if="visionError" class="alert" role="alert">{{ visionError }}</p>
-        <div v-if="visionAnalysis" class="vision-result">
-          <strong>{{ visionAnalysis.provider_status.model }}</strong>
-          <p>{{ visionAnalysis.content }}</p>
+        <p v-if="modelTestError" class="alert" role="alert">{{ modelTestError }}</p>
+        <div v-if="modelTestResult" class="vision-result">
+          <strong>{{ modelTestResult.provider_status?.model || activeTestTab.label }}</strong>
+          <p>{{ modelTestResult.content }}</p>
+          <small v-if="modelTestResult.vector_dimensions">
+            向量维度 {{ modelTestResult.vector_dimensions }} · 前 8 维：
+            {{ modelTestResult.vector_preview.join(' / ') }}
+          </small>
+          <small v-else-if="modelTestResult.provider_status">
+            来源 {{ modelTestResult.provider_status.provider }}
+            {{ modelTestResult.provider_status.fallback_used ? ' · 使用了兜底内容' : '' }}
+          </small>
         </div>
       </section>
     </template>
@@ -452,6 +557,43 @@ onMounted(loadHealth)
   background: var(--brand-soft);
   font-weight: 900;
   text-align: center;
+}
+
+.test-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.test-tabs button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #334155;
+  background: #ffffff;
+  font-weight: 900;
+}
+
+.test-tabs button.active {
+  border-color: #93c5fd;
+  color: var(--brand-dark);
+  background: var(--brand-soft);
+}
+
+.test-summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.test-summary div {
+  display: grid;
+  gap: 4px;
 }
 
 .vision-test-grid {

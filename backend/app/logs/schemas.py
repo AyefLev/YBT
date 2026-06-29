@@ -111,9 +111,15 @@ class HealthComponentRead(BaseModel):
 class ModelHealthRead(BaseModel):
     text_model: str
     generate_model: str
+    generate_configured: bool = False
     review_model: str
+    review_configured: bool = False
     revise_model: str
+    revise_configured: bool = False
     vision_model: str | None
+    vision_configured: bool = False
+    embedding_model: str
+    embedding_configured: bool = False
     api_key_configured: bool
     vision_api_key_configured: bool
     multi_agent_review: bool

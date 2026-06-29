@@ -3,6 +3,7 @@ from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
 
 from app.auth.models import User
+from app.ai.service import _provider_config_for_role
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.deps import require_permission
@@ -126,16 +127,32 @@ def _observability_health(db: Session) -> ObservabilityHealthRead:
     )
 
 
-def _model_health() -> ModelHealthRead:
+def _model_health(db: Session) -> ModelHealthRead:
     settings = get_settings()
+    generate_config = _provider_config_for_role(settings, "generate", db=db)
+    review_config = _provider_config_for_role(settings, "review", db=db)
+    revise_config = _provider_config_for_role(settings, "revise", db=db)
+    vision_config = _provider_config_for_role(settings, "vision", db=db)
+    embedding_config = _provider_config_for_role(settings, "embedding", db=db)
+    text_configured = bool(
+        generate_config.api_key
+        or review_config.api_key
+        or revise_config.api_key
+    )
     return ModelHealthRead(
-        text_model=settings.llm_model,
-        generate_model=settings.llm_generate_model,
-        review_model=settings.llm_review_model,
-        revise_model=settings.llm_revise_model,
-        vision_model=settings.vision_llm_model or None,
-        api_key_configured=bool(settings.llm_api_key),
-        vision_api_key_configured=bool(settings.vision_llm_api_key),
+        text_model=generate_config.model,
+        generate_model=generate_config.model,
+        generate_configured=bool(generate_config.api_key and generate_config.model),
+        review_model=review_config.model,
+        review_configured=bool(review_config.api_key and review_config.model),
+        revise_model=revise_config.model,
+        revise_configured=bool(revise_config.api_key and revise_config.model),
+        vision_model=vision_config.model or None,
+        vision_configured=bool(vision_config.api_key and vision_config.model),
+        embedding_model=embedding_config.model,
+        embedding_configured=bool(embedding_config.model),
+        api_key_configured=text_configured,
+        vision_api_key_configured=bool(vision_config.api_key and vision_config.model),
         multi_agent_review=settings.llm_multi_agent_review,
         mock_on_failure=settings.llm_mock_on_failure,
     )
@@ -318,7 +335,7 @@ def get_system_health(
         database=database,
         cache=cache,
         vector_store=vector_store,
-        models=_model_health(),
+        models=_model_health(db),
         observability=_observability_health(db),
         demo=DemoHealthRead(
             docker_ready_items=[

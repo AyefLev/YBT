@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AIResult(BaseModel):
@@ -53,3 +53,19 @@ class ModelConnectivityResponse(BaseModel):
 class VisionAnalysisResponse(BaseModel):
     content: str
     provider_status: AIResult
+
+
+class ModelTestRequest(BaseModel):
+    prompt: str = Field(
+        default="请只回复 ok，用于模型连通性与输出格式测试。",
+        min_length=1,
+        max_length=4000,
+    )
+
+
+class ModelTestResponse(BaseModel):
+    role: str
+    content: str
+    provider_status: AIResult | None = None
+    vector_dimensions: int | None = None
+    vector_preview: list[float] = []

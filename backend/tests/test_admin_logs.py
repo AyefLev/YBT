@@ -359,11 +359,21 @@ def test_logs_summary_reports_model_and_job_observability_metrics(client):
 
 def test_logs_health_reports_demo_readiness_without_exposing_secrets(client):
     from app.core.database import get_session_local
+    from app.ai.models import AIProviderConfig
     from app.logs.models import JobLog, ModelLog
 
     headers = _admin_headers(client, "admin_health_reader")
     session_local = get_session_local()
     with session_local() as db:
+        db.add(
+            AIProviderConfig(
+                role="generate",
+                base_url="https://db-model.example/v1",
+                api_key="db-generate-key",
+                model="db-generate-model",
+                enabled=True,
+            )
+        )
         db.add_all(
             [
                 ModelLog(
@@ -391,8 +401,10 @@ def test_logs_health_reports_demo_readiness_without_exposing_secrets(client):
     assert body["cache"]["kind"] == "memory"
     assert body["vector_store"]["status"] == "healthy"
     assert body["vector_store"]["kind"] == "disabled"
-    assert body["models"]["text_model"]
-    assert body["models"]["api_key_configured"] is False
+    assert body["models"]["text_model"] == "db-generate-model"
+    assert body["models"]["generate_model"] == "db-generate-model"
+    assert body["models"]["generate_configured"] is True
+    assert body["models"]["api_key_configured"] is True
     assert "api_key" not in body["models"]
     assert body["observability"]["model_total"] == 1
     assert body["observability"]["job_total"] == 1

@@ -347,6 +347,72 @@ def test_admin_cannot_use_teaching_vision_analysis_endpoint(client):
     assert response.status_code == 403
 
 
+def test_admin_model_test_uses_saved_generate_config(client, monkeypatch):
+    import httpx
+
+    captured: dict[str, object] = {}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured["url"] = url
+        captured["authorization"] = headers["Authorization"]
+        captured["model"] = json["model"]
+        captured["prompt"] = json["messages"][0]["content"]
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    headers = _role_headers(client, "ai_model_test_admin", "admin")
+    config_response = client.patch(
+        "/api/ai/admin/provider-configs/generate",
+        headers=headers,
+        json={
+            "base_url": "https://saved-generate.example/v1",
+            "api_key": "saved-key",
+            "model": "saved-generate-model",
+            "enabled": True,
+        },
+    )
+    assert config_response.status_code == 200
+
+    response = client.post(
+        "/api/ai/admin/model-tests/generate",
+        headers=headers,
+        json={"prompt": "只回复 ok"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["role"] == "generate"
+    assert body["content"] == "ok"
+    assert body["provider_status"]["model"] == "saved-generate-model"
+    assert captured["url"] == "https://saved-generate.example/v1/chat/completions"
+    assert captured["authorization"] == "Bearer saved-key"
+    assert captured["prompt"] == "只回复 ok"
+
+
+def test_admin_model_test_embedding_returns_vector_preview(client):
+    headers = _role_headers(client, "ai_embedding_test_admin", "admin")
+
+    response = client.post(
+        "/api/ai/admin/model-tests/embedding",
+        headers=headers,
+        json={"prompt": "矩阵乘法"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["role"] == "embedding"
+    assert body["vector_dimensions"] > 0
+    assert len(body["vector_preview"]) == 8
+    assert body["provider_status"]["provider"] == "local"
+
+
 def test_generate_text_without_key_raises_when_mock_fallback_disabled(client, monkeypatch):
     from app.ai.service import generate_text
     from app.core.config import get_settings
