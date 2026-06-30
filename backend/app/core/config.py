@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     material_parse_wait_seconds: float = 2.0
     upload_dir: Path = Path("../data/uploads")
     export_dir: Path = Path("../data/exports")
+    cors_allow_origins: str = "http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
@@ -67,6 +68,14 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "JWT_SECRET must be set to a non-placeholder value at least 32 characters long."
             )
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [
+            origin.strip()
+            for origin in self.cors_allow_origins.split(",")
+            if origin.strip()
+        ]
 
 
 def _normalize_path(path: Path) -> Path:

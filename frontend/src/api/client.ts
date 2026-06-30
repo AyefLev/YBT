@@ -20,6 +20,7 @@ export class ApiError extends Error {
 }
 
 const TOKEN_KEY = 'token'
+const API_BASE_URL_KEY = 'ybt.apiBaseUrl'
 
 function browserSessionStorage(): Storage | null {
   return typeof sessionStorage === 'undefined' ? null : sessionStorage
@@ -41,6 +42,46 @@ export function setAuthToken(token: string): void {
 export function clearAuthToken(): void {
   browserSessionStorage()?.removeItem(TOKEN_KEY)
   browserLocalStorage()?.removeItem(TOKEN_KEY)
+}
+
+export function getApiBaseUrl(): string {
+  const configured = browserLocalStorage()?.getItem(API_BASE_URL_KEY)?.trim() ?? ''
+  return configured
+}
+
+export function setApiBaseUrl(value: string): string {
+  const normalized = normalizeApiBaseUrl(value)
+  const storage = browserLocalStorage()
+  if (!storage) return normalized
+  if (normalized) {
+    storage.setItem(API_BASE_URL_KEY, normalized)
+  } else {
+    storage.removeItem(API_BASE_URL_KEY)
+  }
+  return normalized
+}
+
+export function clearApiBaseUrl(): void {
+  browserLocalStorage()?.removeItem(API_BASE_URL_KEY)
+}
+
+export function normalizeApiBaseUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '')
+  if (!trimmed) return ''
+
+  const parsed = new URL(trimmed)
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('服务器地址必须以 http:// 或 https:// 开头')
+  }
+  return parsed.toString().replace(/\/+$/, '')
+}
+
+function apiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
+  const baseUrl = getApiBaseUrl()
+  if (!baseUrl) return path
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${baseUrl}${normalizedPath}`
 }
 
 async function parseResponse(response: Response): Promise<unknown> {
@@ -106,7 +147,7 @@ function filenameFromDisposition(disposition: string | null): string | null {
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const headers = requestHeaders(options)
 
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...options,
     headers,
   })
@@ -129,7 +170,7 @@ export function apiForm<T>(path: string, form: FormData, options: ApiOptions = {
 
 export async function apiBlob(path: string, options: ApiOptions = {}): Promise<ApiBlobResponse> {
   const headers = requestHeaders(options)
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...options,
     headers,
   })
@@ -154,4 +195,4 @@ export function downloadBlobResponse(response: ApiBlobResponse, fallbackFilename
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-export { TOKEN_KEY }
+export { API_BASE_URL_KEY, TOKEN_KEY }

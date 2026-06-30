@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
+import { clearApiBaseUrl, getApiBaseUrl, setApiBaseUrl } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
@@ -11,9 +12,33 @@ const auth = useAuthStore()
 const username = ref('')
 const password = ref('')
 const error = ref('')
+const serverUrl = ref(getApiBaseUrl())
+const serverNotice = ref('')
+
+function applyServerUrl(): boolean {
+  error.value = ''
+  serverNotice.value = ''
+  try {
+    const normalized = setApiBaseUrl(serverUrl.value)
+    serverUrl.value = normalized
+    serverNotice.value = normalized ? `当前连接：${normalized}` : '当前使用此应用所在站点'
+    return true
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '服务器地址格式不正确'
+    return false
+  }
+}
+
+function useCurrentSite() {
+  clearApiBaseUrl()
+  serverUrl.value = ''
+  serverNotice.value = '当前使用此应用所在站点'
+  auth.clearSession()
+}
 
 async function submit() {
   error.value = ''
+  if (!applyServerUrl()) return
   try {
     await auth.login({ username: username.value, password: password.value })
     await router.push(typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard')
@@ -41,6 +66,19 @@ async function submit() {
       </div>
 
       <form class="stack" @submit.prevent="submit">
+        <fieldset class="server-box">
+          <legend>服务器连接</legend>
+          <label>
+            服务器地址
+            <input v-model.trim="serverUrl" placeholder="留空使用当前站点，例如 https://ybt.example.edu" />
+          </label>
+          <div class="server-actions">
+            <button type="button" class="btn-secondary" @click="applyServerUrl">保存连接</button>
+            <button type="button" class="btn-secondary" @click="useCurrentSite">使用当前站点</button>
+          </div>
+          <small>{{ serverNotice || '桌面客户端首次使用时，请填写学校或机构提供的服务器地址。' }}</small>
+        </fieldset>
+
         <label>
           用户名
           <input v-model.trim="username" autocomplete="username" required />
@@ -152,5 +190,31 @@ async function submit() {
 
 .switch a:hover {
   text-decoration: underline;
+}
+
+.server-box {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.server-box legend {
+  padding: 0 6px;
+  color: var(--text);
+  font-weight: 900;
+}
+
+.server-box small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.server-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 </style>

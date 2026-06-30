@@ -33,6 +33,35 @@ def test_create_app_uses_current_settings(monkeypatch, tmp_path):
     clear_database_caches()
 
 
+def test_create_app_applies_configured_cors_origins(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from app.core.config import get_settings
+    from app.core.database import clear_database_caches
+    from app.main import create_app
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'cors.db'}")
+    monkeypatch.setenv("JWT_SECRET", "test-jwt-secret-with-enough-length")
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("EXPORT_DIR", str(tmp_path / "exports"))
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "http://tauri.localhost,https://school.example.edu")
+    get_settings.cache_clear()
+    clear_database_caches()
+
+    with TestClient(create_app()) as test_client:
+        response = test_client.options(
+            "/api/health",
+            headers={
+                "Origin": "http://tauri.localhost",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://tauri.localhost"
+    clear_database_caches()
+
+
 def test_settings_normalizes_paths_from_backend_dir(monkeypatch):
     from app.core.config import BACKEND_DIR, get_settings
 

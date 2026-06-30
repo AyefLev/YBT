@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { ApiError, TOKEN_KEY, api, apiBlob, apiForm, downloadBlobResponse } from './client'
+import {
+  API_BASE_URL_KEY,
+  ApiError,
+  TOKEN_KEY,
+  api,
+  apiBlob,
+  apiForm,
+  clearApiBaseUrl,
+  downloadBlobResponse,
+  getApiBaseUrl,
+  setApiBaseUrl,
+} from './client'
 
 describe('api client', () => {
   beforeEach(() => {
@@ -65,6 +76,30 @@ describe('api client', () => {
     const headers = options.headers as Headers
     expect(headers.get('Authorization')).toBe('Bearer valid-token')
     expect(headers.has('Content-Type')).toBe(false)
+  })
+
+  test('uses configured api base url for desktop client mode', async () => {
+    setApiBaseUrl('https://school.example.edu/')
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ status: 'ok' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api('/api/health')).resolves.toEqual({ status: 'ok' })
+
+    expect(getApiBaseUrl()).toBe('https://school.example.edu')
+    expect(localStorage.getItem(API_BASE_URL_KEY)).toBe('https://school.example.edu')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://school.example.edu/api/health')
+  })
+
+  test('clearApiBaseUrl restores relative api paths', async () => {
+    setApiBaseUrl('http://127.0.0.1:8080')
+    clearApiBaseUrl()
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ status: 'ok' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api('/api/health')
+
+    expect(getApiBaseUrl()).toBe('')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/health')
   })
 
   test('apiBlob returns attachment blob and filename from content disposition', async () => {
