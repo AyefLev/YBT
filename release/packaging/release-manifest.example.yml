@@ -1,0 +1,38 @@
+product:
+  name: Yanbeitong AI
+  app_id: com.yanbeitong.ai
+  version: 0.1.0
+
+artifacts:
+  desktop:
+    windows:
+      - ybt-desktop-0.1.0-windows-x64.exe
+      - ybt-desktop-0.1.0-windows-x64.msi
+    macos:
+      - ybt-desktop-0.1.0-macos-universal.dmg
+    linux:
+      - ybt-desktop-0.1.0-linux-x64.AppImage
+  server:
+    windows:
+      - ybt-server-0.1.0-windows-x64.zip
+    linux:
+      - ybt-server-0.1.0-linux-x64.tar.gz
+  demo:
+    windows:
+      - ybt-demo-0.1.0-windows-x64.zip
+
+release_modes:
+  institution:
+    recommended: true
+    data_owner: server
+  desktop_client:
+    recommended: true
+    data_owner: server
+  local_demo:
+    recommended: false
+    data_owner: local_demo
+
+server_dependencies:
+  postgresql: ">=16"
+  redis: ">=7"
+  qdrant: ">=1.12"

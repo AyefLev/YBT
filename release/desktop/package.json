@@ -1,0 +1,17 @@
+{
+  "name": "ybt-desktop-release",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "frontend:dev": "npm --prefix ../../frontend run dev -- --host 127.0.0.1 --port 1420",
+    "frontend:build": "npm --prefix ../../frontend run build",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "dev": "npm run tauri:dev",
+    "build": "npm run tauri:build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

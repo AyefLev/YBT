@@ -1,0 +1,3 @@
+.toolchains/
+desktop/node_modules/
+desktop/src-tauri/target/
